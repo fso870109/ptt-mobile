@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UIKit
 
 struct MainView: View {
     @EnvironmentObject var engine: PttEngine
@@ -6,6 +8,8 @@ struct MainView: View {
     @State private var sosHolding = false
     @State private var sosTask: Task<Void, Never>?
     @State private var alertToShow: AlertInfo?
+    @State private var chatText = ""
+    @State private var photoItem: PhotosPickerItem?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,18 +42,23 @@ struct MainView: View {
                 Text("頻道").tag(0)
                 Text("成員").tag(1)
                 Text("私訊").tag(2)
-                Text("位置").tag(3)
+                Text("訊息").tag(3)
+                Text("位置").tag(4)
             }
             .pickerStyle(.segmented)
             .padding(.horizontal)
             .padding(.vertical, 8)
-            .onChange(of: tab) { newTab in if newTab == 3 { engine.requestLocs() } }
+            .onChange(of: tab) { newTab in
+                if newTab == 4 { engine.requestLocs() }
+                if newTab == 3 { engine.loadMessagesFor(engine.target?.conv) }
+            }
 
             TabView(selection: $tab) {
                 channelList.tag(0)
                 memberList.tag(1)
                 dmList.tag(2)
-                locList.tag(3)
+                chatList.tag(3)
+                locList.tag(4)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
 
@@ -63,11 +72,36 @@ struct MainView: View {
 
             Text(engine.talkStatusText).foregroundStyle(.orange).frame(minHeight: 20)
 
+            if !engine.captionLine.isEmpty {
+                Text((engine.captionInterim ? "字幕（辨識中）：" : "字幕：") + engine.captionLine)
+                    .font(.subheadline)
+                    .foregroundStyle(.blue)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(Color(.secondarySystemBackground))
+            }
+
             PttButton(label: engine.pttLabel, mode: engine.pttMode,
                       onDown: { engine.pttDown() }, onUp: { engine.pttUp() })
                 .padding(.vertical, 8)
 
             Text(engine.lastTalkText).font(.footnote).foregroundStyle(.secondary)
+
+            if engine.me?.role == "user" {
+                Button {
+                    if engine.dispatchId != nil && engine.dispatchStatus.contains("等候") {
+                        engine.cancelDispatch()
+                    } else {
+                        engine.callDispatch()
+                    }
+                } label: {
+                    Text(dispatchLabel)
+                        .frame(maxWidth: .infinity)
+                        .padding(10)
+                }
+                .padding(.horizontal)
+            }
 
             Text(sosHolding ? "繼續按住… 放開取消" : "🚨 長按 2 秒發出緊急警報")
                 .foregroundStyle(.white)
@@ -112,6 +146,66 @@ struct MainView: View {
             AlertSheet(alert: a)
         }
         .onChange(of: engine.alerts) { new in alertToShow = new.first }
+    }
+
+    private var dispatchLabel: String {
+        if engine.dispatchStatus.contains("等候") { return engine.dispatchStatus + "（點此取消）" }
+        if !engine.dispatchStatus.isEmpty { return engine.dispatchStatus }
+        return "呼叫調度台"
+    }
+
+    private var chatList: some View {
+        VStack(spacing: 0) {
+            List {
+                if engine.messages.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("這個對話還沒有文字或照片")
+                        Text("在下方輸入後按「送出」，或點「照片」上傳（約 200KB 以內）")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                } else {
+                    ForEach(engine.messages) { m in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(m.from == engine.me?.id ? "我" : m.fromName) · \(kindLabel(m.kind))")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if let text = m.text, !text.isEmpty { Text(text) }
+                            if m.kind == "photo", let pid = m.photoId {
+                                RemotePhoto(photoId: pid)
+                            }
+                        }
+                    }
+                }
+            }
+            HStack {
+                TextField("輸入文字訊息", text: $chatText)
+                    .textFieldStyle(.roundedBorder)
+                Button("送出") {
+                    engine.sendChat(chatText)
+                    chatText = ""
+                }
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Text("照片")
+                }
+            }
+            .padding(8)
+            .onChange(of: photoItem) { item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        await engine.uploadPhoto(data)
+                    }
+                    await MainActor.run { photoItem = nil }
+                }
+            }
+        }
+    }
+
+    private func kindLabel(_ kind: String) -> String {
+        switch kind {
+        case "photo": return "照片"
+        case "caption": return "字幕"
+        default: return "文字"
+        }
     }
 
     private var channelList: some View {
@@ -249,5 +343,24 @@ struct AlertSheet: View {
             s += "位置：不明（未取得定位）"
         }
         return s
+    }
+}
+
+struct RemotePhoto: View {
+    @EnvironmentObject var engine: PttEngine
+    let photoId: String
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 180)
+            } else {
+                ProgressView().frame(height: 80)
+            }
+        }
+        .task {
+            image = await PhotoCache.shared.image(baseUrl: engine.serverUrl, token: engine.token, photoId: photoId)
+        }
     }
 }

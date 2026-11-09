@@ -32,7 +32,7 @@ class LoginActivity : AppCompatActivity() {
         val btn = findViewById<MaterialButton>(R.id.loginBtn)
         val err = findViewById<TextView>(R.id.error)
         server.setText(prefs.serverUrl.ifBlank { Prefs.DEFAULT_SERVER })
-        company.setText(prefs.company)
+        company.setText(prefs.company.ifBlank { Prefs.DEFAULT_ORG })
         user.setText(prefs.username)
 
         btn.setOnClickListener {
@@ -40,18 +40,18 @@ class LoginActivity : AppCompatActivity() {
             val username = user.text.toString().trim()
             val password = pass.text.toString()
             val org = company.text.toString().trim()
-            if (url.isBlank() || username.isBlank() || password.isBlank()) {
-                err.text = "請輸入伺服器、帳號與密碼"
+            if (url.isBlank() || username.isBlank() || password.isBlank() || org.isBlank()) {
+                err.text = "請輸入伺服器、公司代碼、帳號與密碼"
                 return@setOnClickListener
             }
             btn.isEnabled = false
             err.text = ""
             thread {
                 try {
-                    val result = api.login(url, username, password, org.ifBlank { null })
+                    val result = api.login(url, username, password, org)
                     runOnUiThread {
                         prefs.serverUrl = url
-                        prefs.company = org
+                        prefs.company = org.uppercase()
                         prefs.username = username
                         prefs.token = result.token
                         JsonX.user(result.userJson) // validate shape
@@ -60,7 +60,7 @@ class LoginActivity : AppCompatActivity() {
                     }
                 } catch (e: ApiClient.ApiError) {
                     runOnUiThread {
-                        err.text = e.message
+                        err.text = e.display
                         btn.isEnabled = true
                     }
                 } catch (e: Exception) {

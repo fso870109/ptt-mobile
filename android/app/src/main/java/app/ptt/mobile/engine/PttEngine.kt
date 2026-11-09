@@ -12,6 +12,7 @@ import app.ptt.mobile.audio.PcmPlayer
 import app.ptt.mobile.audio.PcmRecorder
 import app.ptt.mobile.loc.LocationReporter
 import app.ptt.mobile.model.Alert
+import app.ptt.mobile.model.ChatMessage
 import app.ptt.mobile.model.Channel
 import app.ptt.mobile.model.DmSummary
 import app.ptt.mobile.model.JsonX
@@ -28,6 +29,7 @@ import org.json.JSONObject
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.concurrent.thread
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -64,6 +66,11 @@ class PttEngine private constructor(private val app: Context) {
         val shareLoc: Boolean = false,
         val locStatus: String = "未分享",
         val alerts: List<Alert> = emptyList(),
+        val messages: List<ChatMessage> = emptyList(),
+        val captionLine: String = "",
+        val captionInterim: Boolean = false,
+        val dispatchStatus: String = "",
+        val dispatchId: String? = null,
         val toast: String? = null,
         val authLost: Boolean = false,
     )
@@ -155,12 +162,58 @@ class PttEngine private constructor(private val app: Context) {
         val ids = listOf(state.me?.id ?: "", peerId).sorted()
         val conv = "dm:${ids[0]}:${ids[1]}"
         publish(state.copy(target = Target.DmT(peerId, peerName, conv)).withPttLabel())
+        loadMessagesFor(conv)
     }
 
     fun backToChannel() {
         val ch = state.channels.find { it.id == state.channelId }
         val t = if (ch != null) Target.ChannelT(ch.id, ch.name) else state.target
         publish(state.copy(target = t).withPttLabel())
+        loadMessagesFor(t?.conv())
+    }
+
+    fun sendChat(text: String) {
+        val conv = state.target?.conv() ?: run { toast("請先選擇頻道"); return }
+        val t = text.trim()
+        if (t.isEmpty()) return
+        if (t.length > 2000) { toast("文字最多 2000 字"); return }
+        ws.sendJson("t" to "chat", "conv" to conv, "text" to t)
+    }
+
+    fun callDispatch() {
+        if (state.me?.role != "user") { toast("調度員請從網頁調度台接聽來電"); return }
+        if (state.conn != "on") { toast("尚未連線"); return }
+        ws.sendJson("t" to "dispatch_call")
+    }
+
+    fun cancelDispatch() {
+        val id = state.dispatchId ?: return
+        ws.sendJson("t" to "dispatch_done", "id" to id)
+    }
+
+    fun uploadPhoto(jpeg: ByteArray) {
+        val conv = state.target?.conv() ?: run { toast("請先選擇頻道"); return }
+        thread {
+            try {
+                api.uploadPhoto(prefs.serverUrl, prefs.token, conv, jpeg)
+            } catch (e: ApiClient.ApiError) {
+                main.post { toast(e.display) }
+            } catch (e: Exception) {
+                main.post { toast("照片上傳失敗：${e.message}") }
+            }
+        }
+    }
+
+    fun loadMessagesFor(conv: String?) {
+        if (conv.isNullOrBlank() || prefs.token.isBlank()) return
+        thread {
+            try {
+                val list = api.listMessages(prefs.serverUrl, prefs.token, conv)
+                main.post {
+                    if (state.target?.conv() == conv) publish(state.copy(messages = list))
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun startTalk(@Suppress("UNUSED_PARAMETER") source: String = "ui") {
@@ -313,6 +366,7 @@ class PttEngine private constructor(private val app: Context) {
                 val keepDm = state.target is Target.DmT
                 val target = if (keepDm) state.target else Target.ChannelT(chId, ch?.name ?: chId)
                 publish(state.copy(channelId = chId, target = target).withPttLabel())
+                if (!keepDm) loadMessagesFor(chId)
             }
             "members" -> {
                 if (m.optString("channel") == state.channelId) {
@@ -392,7 +446,8 @@ class PttEngine private constructor(private val app: Context) {
                 }
                 var dms = state.dms
                 if (lt != null && conv.startsWith("dm:")) dms = upsertDm(dms, conv, lt)
-                publish(state.copy(talks = talks, dms = dms).withPttLabel())
+                val clearCap = conv == state.target?.conv()
+                publish(state.copy(talks = talks, dms = dms, captionLine = if (clearCap) "" else state.captionLine, captionInterim = if (clearCap) false else state.captionInterim).withPttLabel())
             }
             "channel_activity" -> {
                 val id = m.optString("channel")
@@ -424,7 +479,61 @@ class PttEngine private constructor(private val app: Context) {
                 listeners.forEach { it.onAlertEnd(id, by) }
             }
             "error" -> toast(m.optString("msg").ifBlank { m.optString("code") })
-            "chat" -> { /* 網頁端文字／照片訊息：原生版此階段忽略 */ }
+            "chat" -> {
+                val msgObj = m.optJSONObject("message") ?: return
+                val msg = JsonX.chat(msgObj)
+                val list = if (state.target?.conv() == msg.conv) {
+                    (state.messages.filter { it.id != msg.id } + msg).sortedBy { it.ts }
+                } else state.messages
+                publish(state.copy(messages = list))
+            }
+            "caption" -> {
+                val conv = m.optString("conv")
+                val name = m.optString("fromName")
+                val text = m.optString("text")
+                val interim = m.optBoolean("interim")
+                val line = (if (name.isNotBlank()) "$name：" else "") + text
+                val relevant = conv == state.target?.conv() || conv == state.channelId || state.talks.containsKey(conv)
+                if (relevant) publish(state.copy(captionLine = line, captionInterim = interim))
+            }
+            "queue_self" -> {
+                val item = m.optJSONObject("item")
+                val id = item?.optString("id")
+                val status = item?.optString("status") ?: "waiting"
+                val text = if (status == "held") "調度台已接聽" else "正在等候調度台…"
+                publish(state.copy(dispatchId = id, dispatchStatus = text, toast = text))
+            }
+            "dispatch_pickup" -> {
+                val conv = m.optString("conv")
+                val by = m.optString("by")
+                val byName = m.optString("byName")
+                val item = m.optJSONObject("item")
+                val id = item?.optString("id") ?: state.dispatchId
+                if (conv.isNotBlank() && by.isNotBlank() && state.me?.role == "user") {
+                    val target = Target.DmT(by, byName.ifBlank { "調度台" }, conv)
+                    publish(state.copy(target = target, dispatchId = id, dispatchStatus = "調度台已接聽").withPttLabel())
+                    loadMessagesFor(conv)
+                    toast("調度台已接聽")
+                } else {
+                    publish(state.copy(dispatchId = id, dispatchStatus = "調度台已接聽"))
+                }
+            }
+            "dispatch_transfer" -> {
+                val conv = m.optString("conv")
+                val toName = m.optString("toName")
+                val to = m.optString("to")
+                if (conv.isNotBlank() && to.isNotBlank()) {
+                    publish(state.copy(
+                        target = Target.DmT(to, toName.ifBlank { "調度台" }, conv),
+                        dispatchStatus = "已轉接給 $toName"
+                    ).withPttLabel())
+                    loadMessagesFor(conv)
+                }
+                toast("通話已轉接給 ${toName.ifBlank { "其他調度員" }}")
+            }
+            "dispatch_done" -> {
+                publish(state.copy(dispatchId = null, dispatchStatus = "", toast = "調度台通話已結束"))
+            }
         }
     }
 
@@ -511,8 +620,11 @@ class PttEngine private constructor(private val app: Context) {
 
     private fun toast(msg: String) { publish(state.copy(toast = msg)) }
 
-    private fun denyAuth(reason: String) =
-        if (reason == "revoked") "你的帳號已被停用或密碼已重設，請重新登入" else "登入已過期，請重新登入"
+    private fun denyAuth(reason: String) = when (reason) {
+        "revoked" -> "你的帳號已被停用或密碼已重設，請重新登入"
+        "org_inactive" -> "此公司已停用或方案到期，請重新登入"
+        else -> "登入已過期，請重新登入"
+    }
 
     private fun publish(s: UiState) {
         state = s

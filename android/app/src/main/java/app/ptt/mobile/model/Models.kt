@@ -55,6 +55,18 @@ data class LocEntry(
     val ts: Long,
 )
 
+data class ChatMessage(
+    val id: String,
+    val conv: String,
+    val from: String,
+    val fromName: String,
+    val kind: String,
+    val text: String?,
+    val photoId: String?,
+    val mime: String?,
+    val ts: Long,
+)
+
 data class Alert(
     val id: String,
     val userId: String,
@@ -181,6 +193,19 @@ object JsonX {
         ts = o.optLong("ts"),
     )
     fun alerts(a: JSONArray?) = map(a) { alert(it) }
+
+    fun chat(o: JSONObject) = ChatMessage(
+        id = o.optString("id"),
+        conv = o.optString("conv"),
+        from = o.optString("from"),
+        fromName = o.optString("fromName"),
+        kind = o.optString("kind", "text"),
+        text = str(o, "text"),
+        photoId = str(o, "photoId"),
+        mime = str(o, "mime"),
+        ts = o.optLong("ts"),
+    )
+    fun chats(a: JSONArray?) = map(a) { chat(it) }
 
     private fun <T> map(a: JSONArray?, f: (JSONObject) -> T): List<T> {
         if (a == null) return emptyList()

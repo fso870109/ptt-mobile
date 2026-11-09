@@ -3,6 +3,8 @@ package app.ptt.mobile.ui
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -11,6 +13,8 @@ import android.os.Looper
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -23,6 +27,7 @@ import app.ptt.mobile.engine.PttEngine
 import app.ptt.mobile.model.Alert
 import app.ptt.mobile.model.Target
 import app.ptt.mobile.net.ApiClient
+import app.ptt.mobile.net.ImageCompressor
 import app.ptt.mobile.service.PttKeys
 import app.ptt.mobile.service.PttService
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -46,11 +51,17 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     private lateinit var panelChannels: View
     private lateinit var panelMembers: View
     private lateinit var panelDms: View
+    private lateinit var panelChat: View
     private lateinit var panelLoc: View
     private lateinit var tabChannels: TextView
     private lateinit var tabMembers: TextView
     private lateinit var tabDms: TextView
+    private lateinit var tabChat: TextView
     private lateinit var tabLoc: TextView
+    private lateinit var messageList: LinearLayout
+    private lateinit var chatInput: EditText
+    private lateinit var captionBanner: TextView
+    private lateinit var dispatchBtn: TextView
     private lateinit var targetLabel: TextView
     private lateinit var roleBadge: TextView
     private lateinit var backToChannel: TextView
@@ -64,6 +75,19 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { startServiceAndBind() }
+
+    private val photoCache = HashMap<String, Bitmap>()
+    private val pickImage = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        thread {
+            try {
+                val bytes = ImageCompressor.compress(this, uri)
+                engine.uploadPhoto(bytes)
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, "照片上傳失敗：${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -114,11 +138,17 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
         panelChannels = findViewById(R.id.panelChannels)
         panelMembers = findViewById(R.id.panelMembers)
         panelDms = findViewById(R.id.panelDms)
+        panelChat = findViewById(R.id.panelChat)
         panelLoc = findViewById(R.id.panelLoc)
         tabChannels = findViewById(R.id.tabChannels)
         tabMembers = findViewById(R.id.tabMembers)
         tabDms = findViewById(R.id.tabDms)
+        tabChat = findViewById(R.id.tabChat)
         tabLoc = findViewById(R.id.tabLoc)
+        messageList = findViewById(R.id.messageList)
+        chatInput = findViewById(R.id.chatInput)
+        captionBanner = findViewById(R.id.captionBanner)
+        dispatchBtn = findViewById(R.id.dispatchBtn)
         targetLabel = findViewById(R.id.targetLabel)
         roleBadge = findViewById(R.id.roleBadge)
         backToChannel = findViewById(R.id.backToChannel)
@@ -140,7 +170,10 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             engine.disconnect(clearAuth = true)
             goLogin()
         }
-        val tabs = listOf(tabChannels to panelChannels, tabMembers to panelMembers, tabDms to panelDms, tabLoc to panelLoc)
+        val tabs = listOf(
+            tabChannels to panelChannels, tabMembers to panelMembers,
+            tabDms to panelDms, tabChat to panelChat, tabLoc to panelLoc
+        )
         fun select(sel: TextView) {
             for ((tab, panel) in tabs) {
                 val on = tab === sel
@@ -148,12 +181,24 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
                 panel.visibility = if (on) View.VISIBLE else View.GONE
             }
             if (sel === tabLoc) engine.requestLocs()
+            if (sel === tabChat) engine.loadMessagesFor(engine.state.target?.conv())
         }
         tabChannels.setOnClickListener { select(tabChannels) }
         tabMembers.setOnClickListener { select(tabMembers) }
         tabDms.setOnClickListener { select(tabDms) }
+        tabChat.setOnClickListener { select(tabChat) }
         tabLoc.setOnClickListener { select(tabLoc) }
         select(tabChannels)
+
+        findViewById<TextView>(R.id.sendChat).setOnClickListener {
+            engine.sendChat(chatInput.text.toString())
+            chatInput.setText("")
+        }
+        findViewById<TextView>(R.id.sendPhoto).setOnClickListener { pickImage.launch("image/*") }
+        dispatchBtn.setOnClickListener {
+            if (engine.state.dispatchId != null && engine.state.dispatchStatus.contains("等候")) engine.cancelDispatch()
+            else engine.callDispatch()
+        }
 
         pttBtn.setOnTouchListener { v, ev ->
             when (ev.actionMasked) {
@@ -234,6 +279,19 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
         backToChannel.visibility = if (s.target is Target.DmT) View.VISIBLE else View.GONE
         talkStatus.text = engine.talkStatusText()
         lastTalk.text = s.lastTalkText
+        if (s.captionLine.isBlank()) {
+            captionBanner.visibility = View.GONE
+        } else {
+            captionBanner.visibility = View.VISIBLE
+            captionBanner.text = (if (s.captionInterim) "字幕（辨識中）：" else "字幕：") + s.captionLine
+        }
+        val isCaller = s.me?.role == "user"
+        dispatchBtn.visibility = if (isCaller) View.VISIBLE else View.GONE
+        dispatchBtn.text = when {
+            s.dispatchStatus.contains("等候") -> s.dispatchStatus + "（點此取消）"
+            s.dispatchStatus.isNotBlank() -> s.dispatchStatus
+            else -> "呼叫調度台"
+        }
         pttBtn.text = s.pttLabel
         pttBtn.setBackgroundResource(
             when (s.pttMode) {
@@ -286,6 +344,8 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             }
         }.ifEmpty { listOf(Triple(if (s.me?.role == "admin") "還沒有人分享位置" else "同頻道還沒有人分享位置", "", {})) })
 
+        renderMessages(s)
+
         if (s.alerts.isEmpty()) {
             alertBanner.visibility = View.GONE
         } else {
@@ -332,6 +392,54 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             b.setNegativeButton(if (mine) "取消我的警報" else "解除警報") { _, _ -> engine.resolveAlert(a.id) }
         }
         b.show()
+    }
+
+    private fun renderMessages(s: PttEngine.UiState) {
+        messageList.removeAllViews()
+        if (s.messages.isEmpty()) {
+            val empty = layoutInflater.inflate(R.layout.item_row, messageList, false)
+            empty.findViewById<TextView>(R.id.title).text = "這個對話還沒有文字或照片"
+            empty.findViewById<TextView>(R.id.meta).text = "在下方輸入後按「送出」，或點「照片」上傳（約 200KB 以內）"
+            messageList.addView(empty)
+            return
+        }
+        for (m in s.messages) {
+            val v = layoutInflater.inflate(R.layout.item_message, messageList, false)
+            val who = if (m.from == s.me?.id) "我" else m.fromName
+            val kind = when (m.kind) {
+                "photo" -> "照片"
+                "caption" -> "字幕"
+                else -> "文字"
+            }
+            v.findViewById<TextView>(R.id.msgMeta).text = "$who · $kind"
+            val textView = v.findViewById<TextView>(R.id.msgText)
+            if (m.text.isNullOrBlank()) {
+                textView.visibility = View.GONE
+            } else {
+                textView.text = m.text
+            }
+            val img = v.findViewById<ImageView>(R.id.msgPhoto)
+            val pid = m.photoId
+            if (m.kind == "photo" && !pid.isNullOrBlank()) {
+                img.visibility = View.VISIBLE
+                bindPhoto(img, pid)
+            }
+            messageList.addView(v)
+        }
+    }
+
+    private fun bindPhoto(iv: ImageView, photoId: String) {
+        photoCache[photoId]?.let { iv.setImageBitmap(it); return }
+        thread {
+            try {
+                val bytes = ApiClient().getPhoto(engine.prefs.serverUrl, engine.prefs.token, photoId)
+                val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@thread
+                photoCache[photoId] = bmp
+                runOnUiThread { iv.setImageBitmap(bmp) }
+            } catch (_: Exception) {
+                runOnUiThread { iv.visibility = View.GONE }
+            }
+        }
     }
 
     private fun renderRows(parent: LinearLayout, rows: List<Triple<String, String, () -> Unit>>) {

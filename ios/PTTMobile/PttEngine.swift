@@ -31,6 +31,11 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
     @Published var shareLoc = false
     @Published var locStatus = "未分享"
     @Published var alerts: [AlertInfo] = []
+    @Published var messages: [ChatMessage] = []
+    @Published var captionLine = ""
+    @Published var captionInterim = false
+    @Published var dispatchStatus = ""
+    @Published var dispatchId: String?
     @Published var toast: String?
     @Published var loginError: String?
 
@@ -52,7 +57,10 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
 
     override init() {
         serverUrl = defaults.string(forKey: "serverUrl") ?? "https://ptt-prototype.onrender.com"
-        company = defaults.string(forKey: "company") ?? ""
+        company = {
+            let v = defaults.string(forKey: "company") ?? ""
+            return v.isEmpty ? "DEMO" : v
+        }()
         username = defaults.string(forKey: "username") ?? ""
         token = defaults.string(forKey: "token") ?? ""
         shareLoc = defaults.bool(forKey: "shareLoc")
@@ -95,11 +103,17 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
 
     func login() async {
         loginError = nil
+        let org = company.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if org.isEmpty {
+            loginError = "請輸入公司代碼"
+            return
+        }
+        company = org
         defaults.set(serverUrl, forKey: "serverUrl")
         defaults.set(company, forKey: "company")
         defaults.set(username, forKey: "username")
         do {
-            let result = try await ApiClient.shared.login(baseUrl: serverUrl, username: username, password: pendingPassword, company: company.isEmpty ? nil : company)
+            let result = try await ApiClient.shared.login(baseUrl: serverUrl, username: username, password: pendingPassword, org: org)
             token = result.token
             defaults.set(token, forKey: "token")
             pendingPassword = ""
@@ -152,15 +166,64 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
     func openDm(peerId: String, peerName: String) {
         guard peerId != me?.id else { return }
         let ids = [me?.id ?? "", peerId].sorted()
-        target = .dm(peerId: peerId, peerName: peerName, conv: "dm:\(ids[0]):\(ids[1])")
+        let conv = "dm:\(ids[0]):\(ids[1])"
+        target = .dm(peerId: peerId, peerName: peerName, conv: conv)
         refreshPttLabel()
+        loadMessagesFor(conv)
     }
 
     func backToChannel() {
         if let id = channelId, let ch = channels.first(where: { $0.id == id }) {
             target = .channel(id: ch.id, name: ch.name)
+            loadMessagesFor(id)
         }
         refreshPttLabel()
+    }
+
+    func sendChat(_ text: String) {
+        guard let conv = target?.conv else { toast = "請先選擇頻道"; return }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return }
+        if t.count > 2000 { toast = "文字最多 2000 字"; return }
+        ws.send(json: ["t": "chat", "conv": conv, "text": t])
+    }
+
+    func callDispatch() {
+        guard me?.role == "user" else { toast = "調度員請從網頁調度台接聽來電"; return }
+        guard conn == "on" else { toast = "尚未連線"; return }
+        ws.send(json: ["t": "dispatch_call"])
+    }
+
+    func cancelDispatch() {
+        guard let id = dispatchId else { return }
+        ws.send(json: ["t": "dispatch_done", "id": id])
+    }
+
+    func uploadPhoto(_ data: Data) async {
+        guard let conv = target?.conv else { toast = "請先選擇頻道"; return }
+        guard let jpeg = ApiClient.compressJPEG(data) else {
+            toast = "照片無法壓縮到 200KB 以內，請換一張較小的圖"
+            return
+        }
+        do {
+            _ = try await ApiClient.shared.uploadPhoto(baseUrl: serverUrl, token: token, conv: conv, jpeg: jpeg)
+        } catch {
+            toast = error.localizedDescription
+        }
+    }
+
+    func loadMessagesFor(_ conv: String?) {
+        guard let conv, !conv.isEmpty, !token.isEmpty else { return }
+        let url = serverUrl
+        let tok = token
+        Task {
+            do {
+                let list = try await ApiClient.shared.listMessages(baseUrl: url, token: tok, conv: conv)
+                await MainActor.run {
+                    if self.target?.conv == conv { self.messages = list }
+                }
+            } catch { /* history is best-effort */ }
+        }
     }
 
     /// In-app PTT button. On device this goes through PTChannelManager so lock-screen
@@ -302,8 +365,10 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
             internalStop(sendStop: false, viaSystem: false)
             ws.close()
             conn = "off"; connText = "請重新登入"
-            toast = (m["reason"] as? String) == "revoked"
-                ? "你的帳號已被停用或密碼已重設，請重新登入" : "登入已過期，請重新登入"
+            let reason = m["reason"] as? String ?? ""
+            if reason == "revoked" { toast = "你的帳號已被停用或密碼已重設，請重新登入" }
+            else if reason == "org_inactive" { toast = "此公司已停用或方案到期，請重新登入" }
+            else { toast = "登入已過期，請重新登入" }
         case "welcome":
             retry = 0
             if let u = m["user"] as? [String: Any] { me = JSONX.user(u) }
@@ -331,7 +396,10 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
             channelId = chId
             defaults.set(chId, forKey: "channel")
             let name = channels.first(where: { $0.id == chId })?.name ?? chId!
-            if case .dm = target {} else { target = .channel(id: chId!, name: name) }
+            if case .dm = target {} else {
+                target = .channel(id: chId!, name: name)
+                loadMessagesFor(chId)
+            }
             PttSystemChannel.shared.join(channelId: chId!, name: name)
             refreshPttLabel()
         case "members":
@@ -385,6 +453,7 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
                 lastTalks[conv] = lt
             }
             if talks.isEmpty { PttSystemChannel.shared.setRemoteSpeaker(name: nil) }
+            if conv == target?.conv { captionLine = ""; captionInterim = false }
             refreshPttLabel()
         case "channel_activity":
             if let id = m["channel"] as? String, let lt = JSONX.lastTalk(m["lastTalk"] as? [String: Any]) {
@@ -410,7 +479,54 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
         case "error":
             toast = m["msg"] as? String ?? (m["code"] as? String)
         case "chat":
-            break
+            if let obj = m["message"] as? [String: Any] {
+                let msg = JSONX.chat(obj)
+                if target?.conv == msg.conv {
+                    messages = (messages.filter { $0.id != msg.id } + [msg]).sorted { $0.ts < $1.ts }
+                }
+            }
+        case "caption":
+            let conv = m["conv"] as? String ?? ""
+            let name = m["fromName"] as? String ?? ""
+            let text = m["text"] as? String ?? ""
+            let interim = m["interim"] as? Bool ?? false
+            let line = (name.isEmpty ? "" : "\(name)：") + text
+            let relevant = conv == target?.conv || conv == channelId || talks[conv] != nil
+            if relevant { captionLine = line; captionInterim = interim }
+        case "queue_self":
+            if let item = m["item"] as? [String: Any] {
+                dispatchId = item["id"] as? String
+                let status = item["status"] as? String ?? "waiting"
+                dispatchStatus = status == "held" ? "調度台已接聽" : "正在等候調度台…"
+                toast = dispatchStatus
+            }
+        case "dispatch_pickup":
+            let conv = m["conv"] as? String ?? ""
+            let by = m["by"] as? String ?? ""
+            let byName = m["byName"] as? String ?? ""
+            if let item = m["item"] as? [String: Any] { dispatchId = item["id"] as? String ?? dispatchId }
+            dispatchStatus = "調度台已接聽"
+            if !conv.isEmpty && !by.isEmpty && me?.role == "user" {
+                target = .dm(peerId: by, peerName: byName.isEmpty ? "調度台" : byName, conv: conv)
+                refreshPttLabel()
+                loadMessagesFor(conv)
+            }
+            toast = "調度台已接聽"
+        case "dispatch_transfer":
+            let conv = m["conv"] as? String ?? ""
+            let toName = m["toName"] as? String ?? ""
+            let to = m["to"] as? String ?? ""
+            if !conv.isEmpty && !to.isEmpty {
+                target = .dm(peerId: to, peerName: toName.isEmpty ? "調度台" : toName, conv: conv)
+                dispatchStatus = "已轉接給 \(toName)"
+                refreshPttLabel()
+                loadMessagesFor(conv)
+            }
+            toast = "通話已轉接給 \(toName.isEmpty ? "其他調度員" : toName)"
+        case "dispatch_done":
+            dispatchId = nil
+            dispatchStatus = ""
+            toast = "調度台通話已結束"
         default:
             break
         }

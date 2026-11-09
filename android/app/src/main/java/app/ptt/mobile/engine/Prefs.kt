@@ -10,8 +10,11 @@ class Prefs(ctx: Context) {
         set(v) { p.edit().putString("serverUrl", v.trim().trimEnd('/')).apply() }
 
     var company: String
-        get() = p.getString("company", "") ?: ""
-        set(v) { p.edit().putString("company", v.trim()).apply() }
+        get() {
+            val v = p.getString("company", DEFAULT_ORG)?.trim().orEmpty()
+            return v.ifBlank { DEFAULT_ORG }
+        }
+        set(v) { p.edit().putString("company", v.trim().uppercase()).apply() }
 
     var username: String
         get() = p.getString("username", "") ?: ""
@@ -35,5 +38,6 @@ class Prefs(ctx: Context) {
 
     companion object {
         const val DEFAULT_SERVER = "https://ptt-prototype.onrender.com"
+        const val DEFAULT_ORG = "DEMO"
     }
 }

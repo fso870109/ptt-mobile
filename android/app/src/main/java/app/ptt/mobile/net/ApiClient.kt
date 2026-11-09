@@ -1,21 +1,42 @@
 package app.ptt.mobile.net
 
+import app.ptt.mobile.model.ChatMessage
+import app.ptt.mobile.model.JsonX
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+
+object ApiErrors {
+    fun message(error: String, fallback: String): String = when (error) {
+        "need_org" -> fallback.ifBlank { "請輸入公司代碼" }
+        "invalid_credentials" -> fallback.ifBlank { "帳號、密碼或公司代碼錯誤" }
+        "disabled" -> fallback.ifBlank { "此帳號已停用" }
+        "org_disabled" -> fallback.ifBlank { "此公司已被停用" }
+        "org_expired" -> fallback.ifBlank { "此公司方案已到期，請聯絡平台管理員" }
+        "org_inactive" -> fallback.ifBlank { "此公司已停用或方案到期" }
+        "seat_limit" -> fallback.ifBlank { "已達此公司方案的人數上限" }
+        "too_many_attempts" -> fallback.ifBlank { "嘗試次數過多，請稍後再試" }
+        else -> fallback.ifBlank { error }
+    }
+}
 
 class ApiClient(private val http: OkHttpClient = defaultClient()) {
     data class LoginResult(val token: String, val userJson: JSONObject)
-    data class ApiError(val status: Int, val error: String, override val message: String) : RuntimeException(message)
+    data class ApiError(val status: Int, val error: String, override val message: String) : RuntimeException(message) {
+        val display: String get() = ApiErrors.message(error, message)
+    }
 
-    fun login(baseUrl: String, username: String, password: String, company: String?): LoginResult {
+    fun login(baseUrl: String, username: String, password: String, org: String): LoginResult {
+        val code = org.trim().uppercase()
+        if (code.isBlank()) throw ApiError(400, "need_org", "請輸入公司代碼")
         val body = JSONObject()
             .put("username", username)
             .put("password", password)
-        if (!company.isNullOrBlank()) body.put("company", company.trim())
+            .put("org", code)
         val json = request(baseUrl, "POST", "/api/login", body, null)
         val token = json.optString("token")
         if (token.isBlank()) throw ApiError(200, "no_token", "伺服器沒有回傳 token")
@@ -29,6 +50,28 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
     fun me(baseUrl: String, token: String): JSONObject = request(baseUrl, "GET", "/api/me", null, token)
 
     fun health(baseUrl: String): JSONObject = request(baseUrl, "GET", "/api/health", null, null)
+
+    fun listMessages(baseUrl: String, token: String, conv: String): List<ChatMessage> {
+        val q = URLEncoder.encode(conv, "UTF-8")
+        val json = request(baseUrl, "GET", "/api/messages?conv=$q&limit=100", null, token)
+        return JsonX.chats(json.optJSONArray("messages"))
+    }
+
+    fun uploadPhoto(baseUrl: String, token: String, conv: String, jpeg: ByteArray): ChatMessage {
+        val b64 = android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP)
+        val body = JSONObject().put("conv", conv).put("data", b64)
+        val json = request(baseUrl, "POST", "/api/photos", body, token)
+        return JsonX.chat(json.getJSONObject("message"))
+    }
+
+    fun getPhoto(baseUrl: String, token: String, photoId: String): ByteArray {
+        val url = baseUrl.trim().trimEnd('/') + "/api/photos/" + photoId
+        val req = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw ApiError(resp.code, "photo", "無法載入照片（${resp.code}）")
+            return resp.body?.bytes() ?: ByteArray(0)
+        }
+    }
 
     private fun request(baseUrl: String, method: String, path: String, json: JSONObject?, token: String?): JSONObject {
         val url = baseUrl.trim().trimEnd('/') + path
@@ -56,8 +99,8 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
     companion object {
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(25, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
-            .writeTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(40, TimeUnit.SECONDS)
+            .writeTimeout(40, TimeUnit.SECONDS)
             .build()
 
         fun wsUrl(httpUrl: String): String {

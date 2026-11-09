@@ -33,3 +33,8 @@
 - App 被系統掛起或劃掉：收不到該次對講的開頭，也無法從鎖屏被喚醒
 
 藍牙耳機／對講配件的實體鍵由系統 `PTChannelManager` 處理（`didBeginTransmittingFrom` / `didEndTransmittingFrom`），與畫面上的「按住講話」走同一條路。
+
+
+## 登入
+
+登入畫面的公司代碼為必填，預設 `DEMO`，請求體是 `{ "username", "password", "org" }`（不再送舊的 `company` 欄位）。文字／照片訊息、「呼叫調度台」與收到的即時字幕都已接上同一套協定。此環境沒有編譯 iOS。

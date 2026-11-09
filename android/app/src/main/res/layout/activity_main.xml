@@ -69,8 +69,9 @@
 
         <TextView android:id="@+id/tabChannels" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/bg_tab" android:gravity="center" android:text="頻道" android:textColor="@color/text" android:textSize="13sp" />
         <TextView android:id="@+id/tabMembers" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/bg_tab" android:gravity="center" android:text="成員" android:textColor="@color/text" android:textSize="13sp" />
-        <TextView android:id="@+id/tabDms" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/bg_tab" android:gravity="center" android:text="私訊" android:textColor="@color/text" android:textSize="13sp" />
-        <TextView android:id="@+id/tabLoc" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/bg_tab" android:gravity="center" android:text="位置" android:textColor="@color/text" android:textSize="13sp" />
+        <TextView android:id="@+id/tabDms" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/bg_tab" android:gravity="center" android:text="私訊" android:textColor="@color/text" android:textSize="12sp" />
+        <TextView android:id="@+id/tabChat" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/bg_tab" android:gravity="center" android:text="訊息" android:textColor="@color/text" android:textSize="12sp" />
+        <TextView android:id="@+id/tabLoc" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:background="@drawable/bg_tab" android:gravity="center" android:text="位置" android:textColor="@color/text" android:textSize="12sp" />
     </LinearLayout>
 
     <FrameLayout
@@ -93,6 +94,28 @@
         <ScrollView android:id="@+id/panelDms" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone">
             <LinearLayout android:id="@+id/dmList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
         </ScrollView>
+        <LinearLayout android:id="@+id/panelChat" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:visibility="gone">
+            <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+                <LinearLayout android:id="@+id/messageList" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" />
+            </ScrollView>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+                <EditText
+                    android:id="@+id/chatInput"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_input"
+                    android:hint="輸入文字訊息"
+                    android:inputType="textCapSentences|textMultiLine"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="12dp"
+                    android:textColor="@color/text"
+                    android:textColorHint="@color/muted"
+                    android:textSize="14sp" />
+                <TextView android:id="@+id/sendChat" android:layout_width="wrap_content" android:layout_height="44dp" android:gravity="center" android:paddingStart="10dp" android:paddingEnd="8dp" android:text="送出" android:textColor="@color/sky" android:textSize="15sp" />
+                <TextView android:id="@+id/sendPhoto" android:layout_width="wrap_content" android:layout_height="44dp" android:gravity="center" android:paddingStart="4dp" android:paddingEnd="4dp" android:text="照片" android:textColor="@color/sky" android:textSize="15sp" />
+            </LinearLayout>
+        </LinearLayout>
         <ScrollView android:id="@+id/panelLoc" android:layout_width="match_parent" android:layout_height="match_parent" android:visibility="gone">
             <LinearLayout android:orientation="vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
                 <LinearLayout android:orientation="horizontal" android:gravity="center_vertical" android:layout_width="match_parent" android:layout_height="wrap_content">
@@ -161,6 +184,19 @@
         android:textColor="@color/amber"
         android:textSize="14sp" />
 
+    <TextView
+        android:id="@+id/captionBanner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/card"
+        android:paddingStart="16dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="6dp"
+        android:textColor="@color/sky"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -191,6 +227,20 @@
         android:text="這裡還沒有人說話"
         android:textColor="@color/muted"
         android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/dispatchBtn"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_input"
+        android:gravity="center"
+        android:text="呼叫調度台"
+        android:textColor="@color/sky"
+        android:textSize="15sp"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/sosBtn"

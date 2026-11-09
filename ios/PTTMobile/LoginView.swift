@@ -14,8 +14,8 @@ struct LoginView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .padding(12).background(Color(.secondarySystemBackground)).clipShape(RoundedRectangle(cornerRadius: 10))
-                TextField("公司代碼（選填，多公司上線後使用）", text: $engine.company)
-                    .textInputAutocapitalization(.never)
+                TextField("公司代碼（必填，預設 DEMO）", text: $engine.company)
+                    .textInputAutocapitalization(.characters)
                     .autocorrectionDisabled()
                     .padding(12).background(Color(.secondarySystemBackground)).clipShape(RoundedRectangle(cornerRadius: 10))
                 TextField("帳號", text: $engine.username)
@@ -33,7 +33,7 @@ struct LoginView: View {
                 if let err = engine.loginError, !err.isEmpty {
                     Text(err).foregroundStyle(.red)
                 }
-                Text("帳號由管理員在網頁後台建立。iOS 背景／鎖屏對講需要 Apple 的 PushToTalk 能力與伺服器發送 APNs（見 docs/SERVER_CHANGES.md）。")
+                Text("帳號由管理員在網頁後台建立。登入必須填公司代碼（預設 DEMO）。iOS 背景／鎖屏對講需要 Apple 的 PushToTalk 能力與伺服器發送 APNs（見 docs/SERVER_CHANGES.md）。")
                     .font(.footnote).foregroundStyle(.secondary)
                 Spacer()
             }

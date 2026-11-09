@@ -63,6 +63,18 @@ struct LocEntry: Identifiable, Equatable {
     let ts: Int64
 }
 
+struct ChatMessage: Identifiable, Equatable {
+    let id: String
+    let conv: String
+    let from: String
+    let fromName: String
+    let kind: String
+    let text: String?
+    let photoId: String?
+    let mime: String?
+    let ts: Int64
+}
+
 struct AlertInfo: Identifiable, Equatable {
     let id: String
     let userId: String
@@ -164,6 +176,12 @@ enum JSONX {
                  channel: str(o, "channel"), channelName: str(o, "channelName"),
                  lat: dbl(o, "lat") ?? 0, lng: dbl(o, "lng") ?? 0, acc: int(o, "acc"),
                  battery: int(o, "battery"), charging: bool(o, "charging"), ts: int64(o, "ts") ?? 0)
+    }
+    static func chat(_ o: [String: Any]) -> ChatMessage {
+        ChatMessage(id: str(o, "id") ?? "", conv: str(o, "conv") ?? "",
+                    from: str(o, "from") ?? "", fromName: str(o, "fromName") ?? "",
+                    kind: str(o, "kind") ?? "text", text: str(o, "text"),
+                    photoId: str(o, "photoId"), mime: str(o, "mime"), ts: int64(o, "ts") ?? 0)
     }
     static func alert(_ o: [String: Any]) -> AlertInfo {
         AlertInfo(id: str(o, "id") ?? "", userId: str(o, "userId") ?? "", name: str(o, "name") ?? "",

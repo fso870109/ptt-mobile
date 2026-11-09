@@ -2,17 +2,19 @@
 'use strict';
 /**
  * 驗證與 ptt-prototype 伺服器的協定是否互通：
- *  - 雲端 /api/health
- *  - 登入 JSON 可帶 company（多租戶預留）
- *  - 本機啟動一份伺服器：登入、hello、join、發話鎖、搶話、PCM 封包
+ *  - 雲端 /api/health 與登入格式（必須帶 org／orgCode，舊的 company 欄位會 need_org）
+ *  - 可選：用本機管理員憑證檔在 DEMO 建立 t_ 開頭暫用帳號，測完刪除（絕不印出密碼）
+ *  - 本機啟動一份伺服器（DATA_DIR 在 /tmp）：登入、hello、join、發話鎖、搶話、
+ *    PCM 封包、文字訊息、即時字幕、調度台呼叫
  *
- * 不修改 /workspace/ptt-prototype 的檔案（DATA_DIR 指向 /tmp）。
+ * 不修改 /workspace/ptt-prototype 的檔案。
  */
 const http = require('http');
 const https = require('https');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 function loadWs() {
   const candidates = [
@@ -44,13 +46,14 @@ let LOCAL_PORT = 0;
 const PROTO_DIR = process.env.PTT_PROTOTYPE || '/workspace/ptt-prototype';
 const ADMIN_USER = 'admin';
 const ADMIN_PASS = 'test-admin-pass-1234';
+const DEFAULT_ORG = 'DEMO';
 
 let failed = 0;
 function ok(name) { console.log('  ✓', name); }
 function bad(name, extra) { failed++; console.log('  ✗', name, extra ? '— ' + extra : ''); }
 function assert(cond, name, extra) { if (cond) ok(name); else bad(name, extra); }
 
-function request(urlStr, { method = 'GET', body, token, timeout = 20000 } = {}) {
+function request(urlStr, { method = 'GET', body, token, timeout = 25000 } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
     const lib = u.protocol === 'https:' ? https : http;
@@ -72,7 +75,7 @@ function request(urlStr, { method = 'GET', body, token, timeout = 20000 } = {}) 
         const text = Buffer.concat(chunks).toString();
         let json = null;
         try { json = text ? JSON.parse(text) : {}; } catch { json = { raw: text }; }
-        resolve({ status: res.statusCode, json, text });
+        resolve({ status: res.statusCode, json, text, buffer: Buffer.concat(chunks) });
       });
     });
     req.on('error', reject);
@@ -91,6 +94,32 @@ function sinePcm(samples = 1600, freq = 440) {
     buf.writeInt16LE(v, i * 2);
   }
   return buf;
+}
+
+// 最小 JPEG（僅檔頭可被伺服器 sniff 成 image/jpeg）
+const TINY_JPEG = Buffer.from([
+  0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
+  0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9,
+]);
+
+function loadCloudAdmin() {
+  if (process.env.PTT_ADMIN_USER && process.env.PTT_ADMIN_PASS) {
+    return { user: process.env.PTT_ADMIN_USER, pass: process.env.PTT_ADMIN_PASS };
+  }
+  const candidates = [
+    process.env.PTT_ADMIN_CREDS,
+    '/workspace/ptt-prototype-admin-credentials.txt',
+  ].filter(Boolean);
+  for (const f of candidates) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      const text = fs.readFileSync(f, 'utf8');
+      const user = (text.match(/^username:\s*(.+)$/m) || [])[1];
+      const pass = (text.match(/^password:\s*(.+)$/m) || [])[1];
+      if (user && pass) return { user: user.trim(), pass: pass.trim() };
+    } catch { /* next */ }
+  }
+  return null;
 }
 
 class Client {
@@ -142,16 +171,112 @@ async function testCloud() {
     bad('雲端 /api/health 連線', e.message);
     return;
   }
+
   try {
     const r = await request(CLOUD + '/api/login', {
       method: 'POST',
-      body: { username: 'no-such-user-ptt-mobile-ci', password: 'wrong-password-xxxx', company: 'demo' },
+      body: { username: 'no-such-user-ptt-mobile-ci', password: 'wrong-password-xxxx' },
     });
-    assert(r.status === 401 && r.json.error === 'invalid_credentials',
-      'POST /api/login 接受預留的 company 欄位，錯誤格式為 invalid_credentials',
+    assert(r.status === 400 && r.json.error === 'need_org',
+      'POST /api/login 缺少 org → 400 need_org',
       `status=${r.status} error=${r.json && r.json.error}`);
   } catch (e) {
-    bad('雲端 /api/login（company 預留）', e.message);
+    bad('雲端 /api/login（缺少 org）', e.message);
+  }
+
+  try {
+    const r = await request(CLOUD + '/api/login', {
+      method: 'POST',
+      body: { username: 'no-such-user-ptt-mobile-ci', password: 'wrong-password-xxxx', company: 'DEMO' },
+    });
+    assert(r.status === 400 && r.json.error === 'need_org',
+      '舊 APK 只送 company、未送 org → 400 need_org',
+      `status=${r.status} error=${r.json && r.json.error}`);
+  } catch (e) {
+    bad('雲端 /api/login（舊 company 欄位）', e.message);
+  }
+
+  try {
+    const r = await request(CLOUD + '/api/login', {
+      method: 'POST',
+      body: { username: 'no-such-user-ptt-mobile-ci', password: 'wrong-password-xxxx', org: DEFAULT_ORG },
+    });
+    assert(r.status === 401 && r.json.error === 'invalid_credentials',
+      'POST /api/login 帶 org=DEMO + 假帳號 → 401 invalid_credentials',
+      `status=${r.status} error=${r.json && r.json.error}`);
+  } catch (e) {
+    bad('雲端 /api/login（org + 假帳號）', e.message);
+  }
+
+  try {
+    const r = await request(CLOUD + '/api/login', {
+      method: 'POST',
+      body: { username: 'no-such-user-ptt-mobile-ci', password: 'wrong-password-xxxx', orgCode: DEFAULT_ORG },
+    });
+    assert(r.status === 401 && r.json.error === 'invalid_credentials',
+      'POST /api/login 接受 orgCode 別名（假帳號仍 401）',
+      `status=${r.status} error=${r.json && r.json.error}`);
+  } catch (e) {
+    bad('雲端 /api/login（orgCode 別名）', e.message);
+  }
+
+  const creds = loadCloudAdmin();
+  if (!creds) {
+    console.log('  · 找不到管理員憑證檔，略過雲端成功登入與暫用帳號流程');
+    return;
+  }
+
+  let adminTok = null;
+  let createdId = null;
+  try {
+    const login = await request(CLOUD + '/api/login', {
+      method: 'POST',
+      body: { username: creds.user, password: creds.pass, org: DEFAULT_ORG },
+    });
+    assert(login.status === 200 && login.json.token,
+      '管理員以 org=DEMO 登入成功',
+      `status=${login.status} error=${login.json && login.json.error}`);
+    if (!(login.status === 200 && login.json.token)) return;
+    adminTok = login.json.token;
+    const orgCode = login.json.org && login.json.org.code;
+    assert(orgCode === DEFAULT_ORG, `登入回應 org.code === ${DEFAULT_ORG}`, `got=${orgCode}`);
+
+    const uname = 't_' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex');
+    const tmpPass = 'Tmp' + crypto.randomBytes(8).toString('hex');
+    const created = await request(CLOUD + '/api/admin/users', {
+      method: 'POST',
+      token: adminTok,
+      body: { username: uname, displayName: '暫測帳號', password: tmpPass, role: 'user' },
+    });
+    assert(created.status === 201 && created.json.user && created.json.user.id,
+      `在 DEMO 建立暫用帳號 ${uname}`,
+      `status=${created.status} error=${created.json && created.json.error}`);
+    if (!(created.status === 201 && created.json.user)) return;
+    createdId = created.json.user.id;
+
+    const ul = await request(CLOUD + '/api/login', {
+      method: 'POST',
+      body: { username: uname, password: tmpPass, org: DEFAULT_ORG },
+    });
+    assert(ul.status === 200 && ul.json.token && ul.json.user && ul.json.user.username === uname,
+      `暫用帳號 ${uname} 以 org=DEMO 登入成功`,
+      `status=${ul.status} error=${ul.json && ul.json.error}`);
+  } catch (e) {
+    bad('雲端管理員／暫用帳號流程', e.message);
+  } finally {
+    if (adminTok && createdId) {
+      try {
+        const del = await request(CLOUD + '/api/admin/users/' + createdId, {
+          method: 'DELETE',
+          token: adminTok,
+        });
+        assert(del.status === 200 || del.status === 204,
+          '已刪除雲端暫用帳號',
+          `status=${del.status} error=${del.json && del.json.error}`);
+      } catch (e) {
+        bad('刪除雲端暫用帳號', e.message);
+      }
+    }
   }
 }
 
@@ -208,11 +333,27 @@ async function testLocal() {
   }
 
   try {
+    const missing = await request(base + '/api/login', {
+      method: 'POST',
+      body: { username: ADMIN_USER, password: ADMIN_PASS },
+    });
+    assert(missing.status === 400 && missing.json.error === 'need_org',
+      '本機登入缺少 org → 400 need_org',
+      `status=${missing.status} error=${missing.json && missing.json.error}`);
+
+    const oldField = await request(base + '/api/login', {
+      method: 'POST',
+      body: { username: ADMIN_USER, password: ADMIN_PASS, company: DEFAULT_ORG },
+    });
+    assert(oldField.status === 400 && oldField.json.error === 'need_org',
+      '本機登入只送 company → 400 need_org',
+      `status=${oldField.status} error=${oldField.json && oldField.json.error}`);
+
     const loginAdmin = await request(base + '/api/login', {
       method: 'POST',
-      body: { username: ADMIN_USER, password: ADMIN_PASS, company: 'reserved' },
+      body: { username: ADMIN_USER, password: ADMIN_PASS, org: DEFAULT_ORG },
     });
-    assert(loginAdmin.status === 200 && loginAdmin.json.token, '管理員登入（含 company 欄位）成功');
+    assert(loginAdmin.status === 200 && loginAdmin.json.token, '管理員以 org=DEMO 登入成功');
     const adminTok = loginAdmin.json.token;
 
     async function mkUser(username, displayName) {
@@ -228,12 +369,12 @@ async function testLocal() {
     const bobU = await mkUser('bob_m', '小華');
 
     const aliceLogin = await request(base + '/api/login', {
-      method: 'POST', body: { username: 'alice_m', password: 'password123' },
+      method: 'POST', body: { username: 'alice_m', password: 'password123', org: DEFAULT_ORG },
     });
     const bobLogin = await request(base + '/api/login', {
-      method: 'POST', body: { username: 'bob_m', password: 'password123' },
+      method: 'POST', body: { username: 'bob_m', password: 'password123', org: DEFAULT_ORG },
     });
-    assert(aliceLogin.status === 200 && bobLogin.status === 200, '兩個測試帳號登入');
+    assert(aliceLogin.status === 200 && bobLogin.status === 200, '兩個測試帳號以 org=DEMO 登入');
 
     const wsUrl = 'ws://127.0.0.1:' + LOCAL_PORT + '/ws';
     const alice = new Client(wsUrl);
@@ -295,9 +436,56 @@ async function testLocal() {
       assert(payload.equals(pcm), `PCM 淨荷與送出的 ${pcm.length} bytes 完全相同`);
     }
 
+    bob.drain('caption');
+    alice.send({ t: 'caption', conv: 'lobby', text: '請到三號門', interim: false });
+    const cap = await bob.waitType('caption');
+    assert(cap.text === '請到三號門' && cap.conv === 'lobby' && cap.interim === false,
+      'bob 收到即時字幕 caption');
+
     alice.send({ t: 'ptt_stop' });
     const end = await bob.waitType('talk_end');
     assert(end.reason === 'released' && end.streamId === granted.streamId, 'bob 收到 talk_end released');
+
+    alice.drain('chat');
+    bob.drain('chat');
+    alice.send({ t: 'chat', conv: 'lobby', text: '你好測試' });
+    const chatA = await alice.waitType('chat');
+    const chatB = await bob.waitType('chat');
+    assert(chatA.message && chatA.message.text === '你好測試' && chatA.message.kind === 'text',
+      'alice 收到自己送出的文字訊息');
+    assert(chatB.message && chatB.message.text === '你好測試' && chatB.message.from === aliceU.id,
+      'bob 收到文字訊息');
+
+    const hist = await request(base + '/api/messages?conv=lobby&limit=100', {
+      token: aliceLogin.json.token,
+    });
+    assert(hist.status === 200 && (hist.json.messages || []).some((m) => m.text === '你好測試'),
+      'GET /api/messages 可讀回剛才的文字');
+
+    const photo = await request(base + '/api/photos', {
+      method: 'POST',
+      token: aliceLogin.json.token,
+      body: { conv: 'lobby', data: TINY_JPEG.toString('base64') },
+    });
+    assert(photo.status === 201 && photo.json.message && photo.json.message.kind === 'photo' && photo.json.message.photoId,
+      'POST /api/photos 上傳成功',
+      `status=${photo.status} error=${photo.json && photo.json.error}`);
+    if (photo.json.message && photo.json.message.photoId) {
+      const got = await request(base + '/api/photos/' + photo.json.message.photoId, {
+        token: bobLogin.json.token,
+      });
+      const raw = got.buffer || Buffer.from(got.text || '');
+      assert(got.status === 200 && raw.equals(TINY_JPEG), 'GET /api/photos/:id 以 Bearer 取回原圖');
+    }
+
+    alice.drain('queue_self');
+    alice.drain('dispatch_done');
+    alice.send({ t: 'dispatch_call' });
+    const qs = await alice.waitType('queue_self');
+    assert(qs.item && qs.item.id, 'alice dispatch_call 收到 queue_self');
+    alice.send({ t: 'dispatch_done', id: qs.item.id });
+    const done = await alice.waitType('dispatch_done');
+    assert(done.id === qs.item.id, 'alice 結束呼叫後收到 dispatch_done');
 
     // 搶話：一般成員先講，管理員（大廳預設主管）可中斷
     bob.drain('floor_granted');

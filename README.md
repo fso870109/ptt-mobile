@@ -20,16 +20,18 @@
 
 ## 功能
 
-- 登入（可填伺服器網址；**公司代碼**欄位已預留，多租戶上線前可留空）
+- 登入（可填伺服器網址；**公司代碼必填**，欄位名送 `org`，預設填 `DEMO`）
 - 頻道列表、切換、成員、一對一私人對講
 - 按住講話；誰在講、忙碌、被更高優先權中斷
 - 角色：主管可搶話、只聽不能講（警報期間除外）
 - 位置與電量回報（原生可讀電量，**包含 iOS**；網頁版的 Safari 做不到）
 - 緊急警報（長按 2 秒）
+- 文字訊息顯示與傳送；照片顯示與上傳（壓縮至約 200KB JPEG）
+- 「呼叫調度台」（一般使用者；等候中可取消）
+- 顯示收到的即時字幕（`caption`）。此版不在講電話時做裝置端語音辨識（Android `SpeechRecognizer` 會與 `AudioRecord` 搶麥克風）
+- 登入錯誤會顯示 `need_org`／`invalid_credentials`／`disabled`／`org_disabled`／`org_expired`／`seat_limit`／`org_inactive` 的中文說明
 - **Android**：前景服務常駐通知、WebSocket 重連、`AudioRecord` / `AudioTrack` 16 kHz PCM、媒體鍵與常見對講手機 PTT 廣播
 - **iOS**：Apple PushToTalk framework（iOS 16+）、系統鎖屏／Dynamic Island 對講鈕、藍牙配件走同一條 `PTChannelManager` 路徑
-
-此階段**沒有**做文字／照片輸入、調度台、語音轉文字 UI（伺服器若推來 `chat` 等未知事件會忽略，不會崩潰）。
 
 ## 目錄
 
@@ -68,7 +70,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 3. 開啟「一鍵對講」，伺服器預設是 `https://ptt-prototype.onrender.com`。
-4. 用管理員在 [網頁後台](https://ptt-prototype.onrender.com/admin) 建立的帳號登入。
+4. 公司代碼預設為 `DEMO`（必填）。用管理員在 [網頁後台](https://ptt-prototype.onrender.com/admin) 建立的帳號登入。舊版 APK 送的是 `company` 欄位，現在伺服器會回 `400 need_org`，請改用 0.2.0 之後的版本。
 5. 請允許**麥克風**與**通知**（沒有麥克風權限就無法以麥克風類型啟動前景服務）。定位可稍後再允許。
 6. 登入後通知列會留下常駐通知，此時可以把 App 送到背景或鎖屏：應仍能聽到對講。通知上的「發話」是點一下開始／再點結束（通知列不好做「按住」）。藍牙耳機的播放／暫停或線控、以及部分三防機的 PTT 實體鍵則是按下開始、放開結束。
 
@@ -98,8 +100,8 @@ node protocol-test.js
 
 腳本會：
 
-1. 打雲端 `/api/health`，並用帶有 `company` 欄位的假帳號打 `/api/login`（預期 `401 invalid_credentials`，用來確認雲端認得同一份登入 JSON）。
-2. 在本機用環境變數啟動一份 `ptt-prototype`（寫入 `/tmp`，**不修改**原型倉庫的檔案），完整測試登入、加入頻道、發話鎖、搶話、PCM 封包（4 位元組 big-endian `streamId` + s16le）。
+1. 打雲端 `/api/health`，並驗證登入格式：缺少 `org`、或只送舊的 `company` 欄位會得到 `400 need_org`；帶 `org`／`orgCode` 與假帳號會得到 `401 invalid_credentials`。若本機有管理員憑證檔，會再用 `org=DEMO` 登入管理員、建立 `t_` 開頭暫用帳號驗證成功登入，測完刪除（腳本不會印出密碼）。
+2. 在本機用環境變數啟動一份 `ptt-prototype`（寫入 `/tmp`，**不修改**原型倉庫的檔案），完整測試 `org=DEMO` 登入、加入頻道、發話鎖、搶話、PCM 封包（4 位元組 big-endian `streamId` + s16le）、文字訊息、即時字幕、照片上傳、以及 `dispatch_call`／`queue_self`／`dispatch_done`。
 
 沒有在此環境啟動 Android 模擬器（映像檔很大，而且這個 Linux 環境通常沒有可用的 KVM／圖形加速）。協定層用腳本對真實伺服器驗證；APK 有實際編譯。
 
