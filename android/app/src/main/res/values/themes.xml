@@ -1,0 +1,12 @@
+<resources>
+    <style name="Theme.Ptt" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="colorPrimary">@color/green</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="colorSurface">@color/card</item>
+    </style>
+</resources>

@@ -1,0 +1,24 @@
+name: PTTMobile
+options:
+  bundleIdPrefix: app.ptt
+  deploymentTarget:
+    iOS: "16.0"
+  developmentLanguage: zh-Hant
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+targets:
+  PTTMobile:
+    type: application
+    platform: iOS
+    sources:
+      - PTTMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.ptt.mobile
+        INFOPLIST_FILE: PTTMobile/Info.plist
+        CODE_SIGN_ENTITLEMENTS: PTTMobile/PTTMobile.entitlements
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: 1
+        TARGETED_DEVICE_FAMILY: "1,2"
+        DEVELOPMENT_TEAM: ""

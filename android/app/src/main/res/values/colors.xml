@@ -1,0 +1,14 @@
+<resources>
+    <color name="bg">#FF0F172A</color>
+    <color name="card">#FF1E293B</color>
+    <color name="card2">#FF334155</color>
+    <color name="text">#FFE2E8F0</color>
+    <color name="muted">#FF94A3B8</color>
+    <color name="green">#FF22C55E</color>
+    <color name="green_dark">#FF15803D</color>
+    <color name="red">#FFEF4444</color>
+    <color name="sos">#FFDC2626</color>
+    <color name="amber">#FFF59E0B</color>
+    <color name="sky">#FF38BDF8</color>
+    <color name="icon_bg">#FF0F172A</color>
+</resources>

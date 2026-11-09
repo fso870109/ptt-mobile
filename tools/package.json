@@ -1,0 +1,8 @@
+{
+  "name": "ptt-mobile-tools",
+  "private": true,
+  "description": "Protocol tests for the PTT native clients",
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

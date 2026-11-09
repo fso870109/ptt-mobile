@@ -1,0 +1,274 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		82A39F1274B64DF5BA26FB0F /* PTTMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53A9055241EA4A9A820EF163 /* PTTMobileApp.swift */; };
+		BEEEA699759F477EA77E53C7 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E23F7C15ED41CEA58AD898 /* AppDelegate.swift */; };
+		488B52EA640E43D9A1E3073E /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A410BBC92023441E94BF2D00 /* Models.swift */; };
+		B89053D088C84B36B133B189 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DFE5787606444AC9636EE71 /* ApiClient.swift */; };
+		15C947C19C7F4A96871ED177 /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD7416CAC51046D285F15260 /* WebSocketClient.swift */; };
+		F496AB35F05B4FA09BC5D573 /* PcmAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0EB940621FB4A6EB65EF973 /* PcmAudio.swift */; };
+		8A0467919C644A36984FF279 /* PttSystemChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 192BDFFDDCEB40D99202B5FA /* PttSystemChannel.swift */; };
+		C30962DCD2744D2C81112697 /* PttEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75A213D6D4BD4EA7925EFCA5 /* PttEngine.swift */; };
+		E793CB359BC948CF8CE411F2 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2086EB4274DE461A9148AE6E /* LoginView.swift */; };
+		4D838769A82F47FBB06A9CBC /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66E8EF5FB1C5428A9B69AEA2 /* MainView.swift */; };
+		D9CF88BFA45D4B998D992192 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1CC2E984E61F40A8A14580B1 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		53A9055241EA4A9A820EF163 /* PTTMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PTTMobileApp.swift; sourceTree = "<group>"; };
+		16E23F7C15ED41CEA58AD898 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A410BBC92023441E94BF2D00 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		9DFE5787606444AC9636EE71 /* ApiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiClient.swift; sourceTree = "<group>"; };
+		FD7416CAC51046D285F15260 /* WebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketClient.swift; sourceTree = "<group>"; };
+		D0EB940621FB4A6EB65EF973 /* PcmAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PcmAudio.swift; sourceTree = "<group>"; };
+		192BDFFDDCEB40D99202B5FA /* PttSystemChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PttSystemChannel.swift; sourceTree = "<group>"; };
+		75A213D6D4BD4EA7925EFCA5 /* PttEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PttEngine.swift; sourceTree = "<group>"; };
+		2086EB4274DE461A9148AE6E /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		66E8EF5FB1C5428A9B69AEA2 /* MainView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
+		1CC2E984E61F40A8A14580B1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		29F336555810473BAA2AC1FC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		4F846209C7384934A10B9171 /* PTTMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PTTMobile.entitlements; sourceTree = "<group>"; };
+		C2EF9A9BD4F648038A8CDDA4 /* PTTMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PTTMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		7FC14643DC4241A3B3795716 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		E429B5DAC8DE466AABD9D5B9 = {
+			isa = PBXGroup;
+			children = (
+				64C5BECB16104A0BBC1D079A /* PTTMobile */,
+				8863E22E4FE240C992023D6D /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		64C5BECB16104A0BBC1D079A /* PTTMobile */ = {
+			isa = PBXGroup;
+			children = (
+				53A9055241EA4A9A820EF163 /* PTTMobileApp.swift */,
+				16E23F7C15ED41CEA58AD898 /* AppDelegate.swift */,
+				A410BBC92023441E94BF2D00 /* Models.swift */,
+				9DFE5787606444AC9636EE71 /* ApiClient.swift */,
+				FD7416CAC51046D285F15260 /* WebSocketClient.swift */,
+				D0EB940621FB4A6EB65EF973 /* PcmAudio.swift */,
+				192BDFFDDCEB40D99202B5FA /* PttSystemChannel.swift */,
+				75A213D6D4BD4EA7925EFCA5 /* PttEngine.swift */,
+				2086EB4274DE461A9148AE6E /* LoginView.swift */,
+				66E8EF5FB1C5428A9B69AEA2 /* MainView.swift */,
+				1CC2E984E61F40A8A14580B1 /* Assets.xcassets */,
+				29F336555810473BAA2AC1FC /* Info.plist */,
+				4F846209C7384934A10B9171 /* PTTMobile.entitlements */,
+			);
+			path = PTTMobile;
+			sourceTree = "<group>";
+		};
+		8863E22E4FE240C992023D6D /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				C2EF9A9BD4F648038A8CDDA4 /* PTTMobile.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B5487C979F334C90BBA6D387 /* PTTMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FD74DF0197154048B7DE7924 /* Build configuration list for PBXNativeTarget "PTTMobile" */;
+			buildPhases = (
+				A672EDA4779B4C438CE43646 /* Sources */,
+				7FC14643DC4241A3B3795716 /* Frameworks */,
+				02EDCF218EFC4F1E86BFDE82 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = PTTMobile;
+			productName = PTTMobile;
+			productReference = C2EF9A9BD4F648038A8CDDA4 /* PTTMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9AE1F9A8C69740E1853F7131 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					B5487C979F334C90BBA6D387 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = E6A8422C41D64A0EABB24166 /* Build configuration list for PBXProject "PTTMobile" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = "zh-Hant";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				"zh-Hant",
+				Base,
+			);
+			mainGroup = E429B5DAC8DE466AABD9D5B9;
+			productRefGroup = 8863E22E4FE240C992023D6D /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B5487C979F334C90BBA6D387 /* PTTMobile */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		02EDCF218EFC4F1E86BFDE82 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D9CF88BFA45D4B998D992192 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A672EDA4779B4C438CE43646 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				82A39F1274B64DF5BA26FB0F /* PTTMobileApp.swift in Sources */,
+				BEEEA699759F477EA77E53C7 /* AppDelegate.swift in Sources */,
+				488B52EA640E43D9A1E3073E /* Models.swift in Sources */,
+				B89053D088C84B36B133B189 /* ApiClient.swift in Sources */,
+				15C947C19C7F4A96871ED177 /* WebSocketClient.swift in Sources */,
+				F496AB35F05B4FA09BC5D573 /* PcmAudio.swift in Sources */,
+				8A0467919C644A36984FF279 /* PttSystemChannel.swift in Sources */,
+				C30962DCD2744D2C81112697 /* PttEngine.swift in Sources */,
+				E793CB359BC948CF8CE411F2 /* LoginView.swift in Sources */,
+				4D838769A82F47FBB06A9CBC /* MainView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B780551DA0504BC49BE2F726 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B87FD55F177C47739DC54744 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A2A8345A68F245A69220012F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PTTMobile/PTTMobile.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PTTMobile/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.ptt.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		55DAE2713B6B4F6AB90F7A59 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = PTTMobile/PTTMobile.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = PTTMobile/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.ptt.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E6A8422C41D64A0EABB24166 /* Build configuration list for PBXProject "PTTMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B780551DA0504BC49BE2F726 /* Debug */,
+				B87FD55F177C47739DC54744 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FD74DF0197154048B7DE7924 /* Build configuration list for PBXNativeTarget "PTTMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A2A8345A68F245A69220012F /* Debug */,
+				55DAE2713B6B4F6AB90F7A59 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 9AE1F9A8C69740E1853F7131 /* Project object */;
+}
