@@ -609,13 +609,11 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
                         java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.TAIWAN)
                             .format(java.util.Date(c.optLong("startedAt")))
                     } catch (_: Exception) { "" }
-                    lines.add("$name → $where · $whenStr · ${"%.1f".format(dur)} 秒$pre")
+                    lines.add(name + " → " + where + " · " + whenStr + " · " + String.format("%.1f", dur) + " 秒" + pre)
                 }
                 runOnUiThread {
                     val msg = if (lines.isEmpty()) "目前沒有通話紀錄。只記錄說話者、對象、時間、長度與是否被插話，不存音訊。"
-                    else lines.joinToString("
-
-")
+                    else lines.joinToString("\n\n")
                     AlertDialog.Builder(this)
                         .setTitle("通話紀錄")
                         .setMessage(msg)
@@ -807,12 +805,12 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 16, 48, 8)
         }
-        val hint = TextView(this).apply {
+        val hintView = TextView(this).apply {
             text = "請描述發生了什麼。可選擇附上截圖。系統會自動附上裝置型號、系統、App 版本與最近的連線事件（不含 token、密碼或語音）。"
             textSize = 13f
         }
         val input = EditText(this).apply {
-            hint = "請描述問題…"
+            this.hint = "請描述問題…"
             minLines = 4
             maxLines = 8
         }
@@ -825,7 +823,7 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             setPadding(0, 16, 0, 8)
             setOnClickListener { pickReportShot.launch("image/*") }
         }
-        wrap.addView(hint); wrap.addView(input); wrap.addView(pick); wrap.addView(shotInfo)
+        wrap.addView(hintView); wrap.addView(input); wrap.addView(pick); wrap.addView(shotInfo)
         AlertDialog.Builder(this)
             .setTitle("回報問題")
             .setView(wrap)
