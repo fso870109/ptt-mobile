@@ -11,17 +11,42 @@ android {
         applicationId = "app.ptt.mobile"
         minSdk = 26
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.3.1"
+        versionCode = 5
+        versionName = "0.4.0"
+    }
+
+    val ksPath = System.getenv("GEELO_KEYSTORE_FILE")
+    val ksPass = System.getenv("GEELO_KEYSTORE_PASSWORD")
+    val keyAliasEnv = System.getenv("GEELO_KEY_ALIAS")
+    val keyPass = System.getenv("GEELO_KEY_PASSWORD")
+    val canSign = !ksPath.isNullOrBlank() &&
+        !ksPass.isNullOrBlank() &&
+        !keyAliasEnv.isNullOrBlank() &&
+        !keyPass.isNullOrBlank() &&
+        file(ksPath).isFile
+
+    if (canSign) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(ksPath!!)
+                storePassword = ksPass
+                keyAlias = keyAliasEnv
+                keyPassword = keyPass
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (canSign) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         debug {
             isMinifyEnabled = false
@@ -50,4 +75,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.media:media:1.7.0")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 }

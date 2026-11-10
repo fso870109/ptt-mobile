@@ -1,1 +1,13 @@
-# Debug / unminified release for the prototype.
+# Geelo release (R8). Keep app code and common HTTP/QR libraries.
+-keepattributes SourceFile,LineNumberTable,*Annotation*,Signature,InnerClasses,EnclosingMethod
+-keep class app.ptt.mobile.** { *; }
+-keepclassmembers class app.ptt.mobile.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep class com.google.zxing.** { *; }
+-keep class com.journeyapps.barcodescanner.** { *; }

@@ -136,7 +136,10 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
     func logout() {
         let t = token
         let url = serverUrl
-        Task { await ApiClient.shared.logout(baseUrl: url, token: t) }
+        Task {
+            await ApiClient.shared.deletePttPush(baseUrl: url, token: t)
+            await ApiClient.shared.logout(baseUrl: url, token: t)
+        }
         disconnect(clearAuth: true)
     }
 
@@ -514,6 +517,7 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
                 loadMessagesFor(chId)
             }
             PttSystemChannel.shared.join(channelId: chId!, name: name)
+            if let data = PttSystemChannel.shared.pushToken { notePushToken(data) }
             refreshPttLabel()
         case "members":
             if (m["channel"] as? String) == channelId { members = JSONX.arr(m, "members").map(JSONX.member) }
@@ -686,11 +690,45 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
     private func ownAlert() -> AlertInfo? { alerts.first(where: { $0.userId == me?.id }) }
 
     private func notePushToken(_ data: Data) {
-        // Hex-encode and keep in memory. Once the server implements the API in
-        // docs/SERVER_CHANGES.md this should POST /api/me/ptt-push.
         let hex = data.map { String(format: "%02x", $0) }.joined()
         defaults.set(hex, forKey: "pttPushToken")
-        print("[PTT] ephemeral push token (\(data.count) bytes) — server registration not implemented yet")
+        let chId = channelId
+        let uuid = chId.map { ChannelUUID.uuid(forChannelId: $0).uuidString }
+        let url = serverUrl
+        let tok = token
+        Task {
+            do {
+                try await ApiClient.shared.registerPttPush(baseUrl: url, token: tok, pushToken: hex, channelId: chId, channelUUID: uuid)
+                EventLog.add("apns", "registered ptt-push")
+            } catch {
+                EventLog.add("apns", "register failed")
+            }
+        }
+    }
+
+    func listCalls() async -> [[String: Any]] {
+        (try? await ApiClient.shared.listCalls(baseUrl: serverUrl, token: token)) ?? []
+    }
+
+    func acceptInvite(codeOrUrl: String) async -> String? {
+        guard let code = ApiClient.parseInviteCode(codeOrUrl) else { return "邀請碼格式不正確" }
+        do {
+            let ch = try await ApiClient.shared.acceptInvite(baseUrl: serverUrl, token: token, code: code)
+            if let id = ch["id"] as? String { join(channelId: id) }
+            toast = "已加入 " + ((ch["name"] as? String) ?? "頻道")
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func createInvite(channelId: String, kind: String, hours: Int?, uses: Int?) async -> (String?, [String: Any]?) {
+        do {
+            let inv = try await ApiClient.shared.createInvite(baseUrl: serverUrl, token: token, channelId: channelId, kind: kind, hours: hours, uses: uses)
+            return (nil, inv)
+        } catch {
+            return (error.localizedDescription, nil)
+        }
     }
 
     // MARK: Location + battery (native iOS can read battery, unlike Safari)

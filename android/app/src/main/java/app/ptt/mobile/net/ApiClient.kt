@@ -81,6 +81,37 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
         return request(baseUrl, "POST", "/api/reports", body, token)
     }
 
+    fun listCalls(baseUrl: String, token: String): org.json.JSONArray {
+        val json = request(baseUrl, "GET", "/api/calls?limit=200", null, token)
+        return json.optJSONArray("calls") ?: org.json.JSONArray()
+    }
+
+    fun downloadCallsCsv(baseUrl: String, token: String): ByteArray {
+        val url = baseUrl.trim().trimEnd('/') + "/api/calls?format=csv"
+        val req = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
+        http.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) throw ApiError(resp.code, "csv", "無法匯出通話紀錄（${resp.code}）")
+            return resp.body?.bytes() ?: ByteArray(0)
+        }
+    }
+
+    fun previewInvite(baseUrl: String, code: String): JSONObject {
+        val json = request(baseUrl, "GET", "/api/invites/$code", null, null)
+        return json.optJSONObject("invite") ?: json
+    }
+
+    fun acceptInvite(baseUrl: String, token: String, code: String): JSONObject {
+        return request(baseUrl, "POST", "/api/invites/$code/accept", JSONObject(), token)
+    }
+
+    fun createInvite(baseUrl: String, token: String, channelId: String, kind: String, hours: Int?, uses: Int?): JSONObject {
+        val body = JSONObject().put("channelId", channelId).put("kind", kind)
+        if (hours != null) body.put("expiresInHours", hours)
+        if (uses != null) body.put("maxUses", uses)
+        val json = request(baseUrl, "POST", "/api/invites", body, token)
+        return json.optJSONObject("invite") ?: json
+    }
+
     fun getPhoto(baseUrl: String, token: String, photoId: String): ByteArray {
         val url = baseUrl.trim().trimEnd('/') + "/api/photos/" + photoId
         val req = Request.Builder().url(url).header("Authorization", "Bearer $token").get().build()
@@ -114,6 +145,15 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
     }
 
     companion object {
+        fun parseInviteCode(raw: String): String? {
+            val s = raw.trim()
+            try {
+                val uri = android.net.Uri.parse(s)
+                uri.getQueryParameter("code")?.takeIf { it.isNotBlank() }?.let { return it }
+            } catch (_: Exception) {}
+            return if (s.matches(Regex("[A-Za-z0-9_-]{8,24}"))) s else null
+        }
+
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(25, TimeUnit.SECONDS)
             .readTimeout(40, TimeUnit.SECONDS)

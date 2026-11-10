@@ -352,8 +352,15 @@ struct PttButton: View {
 struct SettingsSheet: View {
     @EnvironmentObject var engine: PttEngine
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("colorScheme") private var colorSchemePref = "system"
     @State private var showReport = false
     @State private var showDelete = false
+    @State private var showCalls = false
+    @State private var showScanWhy = false
+    @State private var showScanner = false
+    @State private var showInvite = false
+    @State private var showCodeAlert = false
+    @State private var inviteCode = ""
     @State private var password = ""
     @State private var err = ""
     @State private var deleting = false
@@ -362,6 +369,16 @@ struct SettingsSheet: View {
         NavigationStack {
             List {
                 Button("回報問題") { showReport = true }
+                Button("通話紀錄") { showCalls = true }
+                Button("掃描／輸入邀請碼") { showScanWhy = true }
+                if canInvite {
+                    Button("產生頻道邀請") { showInvite = true }
+                }
+                Picker("外觀", selection: $colorSchemePref) {
+                    Text("跟隨系統").tag("system")
+                    Text("淺色").tag("light")
+                    Text("深色").tag("dark")
+                }
                 Button("隱私權政策") { open("/privacy") }
                 Button("服務條款") { open("/terms") }
                 Button("刪除帳號說明") { open("/delete-account") }
@@ -371,6 +388,26 @@ struct SettingsSheet: View {
             .navigationTitle("設定")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
             .sheet(isPresented: $showReport) { ReportSheet().environmentObject(engine) }
+            .sheet(isPresented: $showCalls) { CallLogSheet().environmentObject(engine) }
+            .sheet(isPresented: $showScanner) {
+                QRScannerView { code in
+                    showScanner = false
+                    Task { _ = await engine.acceptInvite(codeOrUrl: code) }
+                }
+            }
+            .sheet(isPresented: $showInvite) { InviteCreateSheet().environmentObject(engine) }
+            .alert("掃描邀請 QR Code", isPresented: $showScanWhy) {
+                Button("取消", role: .cancel) {}
+                Button("開啟相機") { showScanner = true }
+                Button("手動輸入") { showCodeAlert = true }
+            } message: {
+                Text("接下來會使用相機掃描頻道邀請 QR Code，讓你加入對講頻道。我們不會拍照或上傳畫面。")
+            }
+            .alert("輸入邀請碼", isPresented: $showCodeAlert) {
+                TextField("邀請碼或連結", text: $inviteCode)
+                Button("取消", role: .cancel) {}
+                Button("加入") { Task { _ = await engine.acceptInvite(codeOrUrl: inviteCode) } }
+            }
             .alert("刪除我的帳號", isPresented: $showDelete) {
                 SecureField("輸入目前密碼以確認", text: $password)
                 Button("取消", role: .cancel) { password = ""; err = "" }
@@ -379,6 +416,11 @@ struct SettingsSheet: View {
                 Text("此動作無法復原。我們會刪除你的帳號與個人資料，並將你送出的文字訊息匿名化。語音本來就不會保存。若你是公司最後一位管理員，系統會拒絕刪除。" + (err.isEmpty ? "" : "\n\n" + err))
             }
         }
+    }
+
+    private var canInvite: Bool {
+        if engine.me?.role == "admin" || engine.me?.role == "org_admin" { return true }
+        return engine.channels.contains { $0.myRole == "supervisor" }
     }
 
     private func open(_ path: String) {
@@ -403,6 +445,133 @@ struct SettingsSheet: View {
             dismiss()
         }
     }
+}
+
+struct CallLogSheet: View {
+    @EnvironmentObject var engine: PttEngine
+    @Environment(\.dismiss) private var dismiss
+    @State private var rows: [[String: Any]] = []
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if rows.isEmpty {
+                    Text("目前沒有通話紀錄。系統只記錄說話者、頻道或私訊對象、開始時間、長度與是否被插話，不存音訊，保留 90 天。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, c in
+                    Text(fmt(c))
+                }
+            }
+            .navigationTitle("通話紀錄")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
+            .task { rows = await engine.listCalls() }
+        }
+    }
+
+    private func fmt(_ c: [String: Any]) -> String {
+        let name = c["fromName"] as? String ?? "使用者"
+        let kind = c["kind"] as? String ?? ""
+        let whereText = kind == "dm" ? ("私訊 · " + (c["peerName"] as? String ?? "對方")) : ("#" + (c["channelName"] as? String ?? ""))
+        let dur = Double(c["durMs"] as? Int ?? Int(c["durMs"] as? Double ?? 0)) / 1000
+        let ts = (c["startedAt"] as? Double) ?? Double(c["startedAt"] as? Int ?? 0)
+        let when = Date(timeIntervalSince1970: ts / 1000).formatted(date: .abbreviated, time: .shortened)
+        let pre = (c["preempted"] as? Bool) == true ? " · 被插話" : ""
+        return "\(name) → \(whereText) · \(when) · \(String(format: "%.1f", dur)) 秒\(pre)"
+    }
+}
+
+struct InviteCreateSheet: View {
+    @EnvironmentObject var engine: PttEngine
+    @Environment(\.dismiss) private var dismiss
+    @State private var channelId = ""
+    @State private var kind = "join"
+    @State private var hours = ""
+    @State private var uses = ""
+    @State private var url = ""
+    @State private var err = ""
+
+    var channels: [Channel] {
+        if engine.me?.role == "admin" || engine.me?.role == "org_admin" { return engine.channels }
+        return engine.channels.filter { $0.myRole == "supervisor" }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Picker("頻道", selection: $channelId) {
+                    ForEach(channels) { c in Text("# " + c.name).tag(c.id) }
+                }
+                Picker("類型", selection: $kind) {
+                    Text("加入頻道（已有帳號）").tag("join")
+                    Text("邀請註冊（新人開帳號）").tag("register")
+                }
+                TextField("有效時數（空白＝不限）", text: $hours).keyboardType(.numberPad)
+                TextField("次數上限（空白＝不限）", text: $uses).keyboardType(.numberPad)
+                if !url.isEmpty {
+                    ShareLink("分享邀請連結", item: url)
+                    Text(url).font(.footnote).textSelection(.enabled)
+                }
+                if !err.isEmpty { Text(err).foregroundStyle(.red) }
+            }
+            .navigationTitle("產生邀請")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("產生") { Task { await create() } }
+                }
+            }
+            .onAppear { if channelId.isEmpty { channelId = channels.first?.id ?? "" } }
+        }
+    }
+
+    func create() async {
+        err = ""
+        let h = Int(hours)
+        let u = Int(uses)
+        let (msg, inv) = await engine.createInvite(channelId: channelId, kind: kind, hours: h, uses: u)
+        if let msg { err = msg; return }
+        url = inv?["url"] as? String ?? ""
+    }
+}
+
+final class ScannerVC: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onFound: ((String) -> Void)?
+    private let session = AVCaptureSession()
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        guard let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(input) else { return }
+        session.addInput(input)
+        let output = AVCaptureMetadataOutput()
+        guard session.canAddOutput(output) else { return }
+        session.addOutput(output)
+        output.setMetadataObjectsDelegate(self, queue: .main)
+        output.metadataObjectTypes = [.qr]
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.frame = view.bounds
+        preview.videoGravity = .resizeAspectFill
+        preview.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.layer.addSublayer(preview)
+        DispatchQueue.global(qos: .userInitiated).async { self.session.startRunning() }
+    }
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard let obj = metadataObjects.first as? AVMetadataMachineReadableCodeObject, let s = obj.stringValue else { return }
+        session.stopRunning()
+        onFound?(s)
+    }
+}
+
+struct QRScannerView: UIViewControllerRepresentable {
+    var onFound: (String) -> Void
+    func makeUIViewController(context: Context) -> ScannerVC {
+        let vc = ScannerVC()
+        vc.onFound = onFound
+        return vc
+    }
+    func updateUIViewController(_ uiViewController: ScannerVC, context: Context) {}
 }
 
 struct ReportSheet: View {

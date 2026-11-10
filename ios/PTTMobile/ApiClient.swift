@@ -70,6 +70,56 @@ final class ApiClient {
         return JSONX.chat(obj)
     }
 
+    func registerPttPush(baseUrl: String, token: String, pushToken: String, channelId: String?, channelUUID: String?) async throws {
+        var body: [String: Any] = [
+            "platform": "ios",
+            "kind": "voip-ptt",
+            "token": pushToken,
+            "bundleId": Bundle.main.bundleIdentifier ?? "app.ptt.mobile"
+        ]
+        if let channelId { body["channelId"] = channelId }
+        if let channelUUID { body["channelUUID"] = channelUUID }
+        _ = try await request(baseUrl: baseUrl, method: "POST", path: "/api/me/ptt-push", body: body, token: token)
+    }
+
+    func deletePttPush(baseUrl: String, token: String) async {
+        _ = try? await request(baseUrl: baseUrl, method: "DELETE", path: "/api/me/ptt-push", body: [:], token: token)
+    }
+
+    func listCalls(baseUrl: String, token: String) async throws -> [[String: Any]] {
+        let json = try await request(baseUrl: baseUrl, method: "GET", path: "/api/calls?limit=200", body: nil, token: token)
+        return (json["calls"] as? [[String: Any]]) ?? []
+    }
+
+    func previewInvite(baseUrl: String, code: String) async throws -> [String: Any] {
+        let json = try await request(baseUrl: baseUrl, method: "GET", path: "/api/invites/" + code, body: nil, token: nil)
+        guard let inv = json["invite"] as? [String: Any] else { throw ApiError.decode }
+        return inv
+    }
+
+    func acceptInvite(baseUrl: String, token: String, code: String) async throws -> [String: Any] {
+        let json = try await request(baseUrl: baseUrl, method: "POST", path: "/api/invites/" + code + "/accept", body: [:], token: token)
+        return (json["channel"] as? [String: Any]) ?? json
+    }
+
+    func createInvite(baseUrl: String, token: String, channelId: String, kind: String, hours: Int?, uses: Int?) async throws -> [String: Any] {
+        var body: [String: Any] = ["channelId": channelId, "kind": kind]
+        if let hours { body["expiresInHours"] = hours }
+        if let uses { body["maxUses"] = uses }
+        let json = try await request(baseUrl: baseUrl, method: "POST", path: "/api/invites", body: body, token: token)
+        guard let inv = json["invite"] as? [String: Any] else { throw ApiError.decode }
+        return inv
+    }
+
+    static func parseInviteCode(_ raw: String) -> String? {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: s), let c = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "code" })?.value, !c.isEmpty {
+            return c
+        }
+        if s.range(of: "^[A-Za-z0-9_-]{8,24}$", options: .regularExpression) != nil { return s }
+        return nil
+    }
+
     func deleteAccount(baseUrl: String, token: String, password: String) async throws {
         _ = try await request(baseUrl: baseUrl, method: "POST", path: "/api/me/delete", body: ["password": password], token: token)
     }

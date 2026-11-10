@@ -16,3 +16,7 @@ DerivedData/
 tools/node_modules/
 *.log
 .kotlin/
+*.jks
+*.keystore
+keystore.properties
+passwords.env

@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.1</string>
+	<string>0.4.0</string>
 	<key>CFBundleVersion</key>
-	<string>4</string>
+	<string>5</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -33,6 +33,8 @@
 	<string>僅在你開啟「分享我的位置」時，把目前位置與電量分享給同頻道成員及公司管理員／調度員。系統只保留最新一筆，不建立移動軌跡。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>僅在你開啟位置分享且 App 在背景收聽對講時，繼續回報目前位置。可隨時在設定中關閉。系統不建立移動軌跡。</string>
+	<key>NSCameraUsageDescription</key>
+	<string>用來掃描頻道邀請 QR Code，讓你加入對講頻道。我們不會拍照或上傳相機畫面。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>讓你選擇要傳送的聊天照片，或在回報問題時附上截圖。我們不會讀取你相簿中的其他內容。</string>
 	<key>UILaunchScreen</key>

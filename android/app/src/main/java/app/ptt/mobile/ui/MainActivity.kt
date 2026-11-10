@@ -27,7 +27,12 @@ import app.ptt.mobile.engine.PttEngine
 import app.ptt.mobile.model.Alert
 import app.ptt.mobile.model.Target
 import app.ptt.mobile.net.ApiClient
+import app.ptt.mobile.PttApp
 import app.ptt.mobile.net.ImageCompressor
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import android.widget.ArrayAdapter
+import android.widget.Spinner
 import app.ptt.mobile.service.PttKeys
 import app.ptt.mobile.service.PttService
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -156,6 +161,15 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             shareLoc.isChecked = false
             Toast.makeText(this, "未允許位置，無法分享", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private val qrLauncher = registerForActivityResult(ScanContract()) { result ->
+        val contents = result.contents ?: return@registerForActivityResult
+        handleInvite(contents)
+    }
+
+    private val camLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) launchScanner() else Toast.makeText(this, "未允許相機，無法掃描", Toast.LENGTH_SHORT).show()
     }
 
     private fun startServiceAndBind() {
@@ -534,22 +548,215 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     }
 
 
+    private fun canCreateInvite(): Boolean {
+        val me = engine.state.me
+        if (me?.role == "admin" || me?.role == "org_admin") return true
+        return engine.state.channels.any { it.myRole == "supervisor" }
+    }
+
     private fun showSettings() {
-        val items = arrayOf("回報問題", "隱私權政策", "服務條款", "刪除帳號說明", "刪除我的帳號")
+        val items = mutableListOf("回報問題", "通話紀錄", "掃描邀請碼", "輸入邀請碼", "外觀")
+        if (canCreateInvite()) items.add("產生頻道邀請")
+        items.addAll(listOf("隱私權政策", "服務條款", "刪除帳號說明", "刪除我的帳號"))
         AlertDialog.Builder(this)
             .setTitle("設定")
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> showReportDialog()
-                    1 -> openLegal("/privacy")
-                    2 -> openLegal("/terms")
-                    3 -> openLegal("/delete-account")
-                    4 -> showDeleteAccount()
+            .setItems(items.toTypedArray()) { _, which ->
+                when (items[which]) {
+                    "回報問題" -> showReportDialog()
+                    "通話紀錄" -> showCallLogs()
+                    "掃描邀請碼" -> startQrScan()
+                    "輸入邀請碼" -> promptInviteCode()
+                    "外觀" -> showThemePicker()
+                    "產生頻道邀請" -> showCreateInvite()
+                    "隱私權政策" -> openLegal("/privacy")
+                    "服務條款" -> openLegal("/terms")
+                    "刪除帳號說明" -> openLegal("/delete-account")
+                    "刪除我的帳號" -> showDeleteAccount()
                 }
             }
             .setNegativeButton("關閉", null)
             .show()
     }
+
+    private fun showThemePicker() {
+        val modes = arrayOf("跟隨系統", "淺色", "深色")
+        val values = arrayOf("system", "light", "dark")
+        val cur = PttApp.themeMode(this)
+        val checked = values.indexOf(cur).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("外觀")
+            .setSingleChoiceItems(modes, checked) { d, which ->
+                PttApp.setThemeMode(this, values[which])
+                d.dismiss()
+            }
+            .setNegativeButton("關閉", null)
+            .show()
+    }
+
+    private fun showCallLogs() {
+        thread {
+            try {
+                val arr = ApiClient().listCalls(engine.prefs.serverUrl, engine.prefs.token)
+                val lines = ArrayList<String>()
+                for (i in 0 until arr.length()) {
+                    val c = arr.getJSONObject(i)
+                    val name = c.optString("fromName", "使用者")
+                    val kind = c.optString("kind")
+                    val where = if (kind == "dm") "私訊 · " + c.optString("peerName", "對方") else "#" + c.optString("channelName")
+                    val dur = c.optDouble("durMs", 0.0) / 1000.0
+                    val pre = if (c.optBoolean("preempted")) " · 被插話" else ""
+                    val whenStr = try {
+                        java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.TAIWAN)
+                            .format(java.util.Date(c.optLong("startedAt")))
+                    } catch (_: Exception) { "" }
+                    lines.add("$name → $where · $whenStr · ${"%.1f".format(dur)} 秒$pre")
+                }
+                runOnUiThread {
+                    val msg = if (lines.isEmpty()) "目前沒有通話紀錄。只記錄說話者、對象、時間、長度與是否被插話，不存音訊。"
+                    else lines.joinToString("
+
+")
+                    AlertDialog.Builder(this)
+                        .setTitle("通話紀錄")
+                        .setMessage(msg)
+                        .setPositiveButton("匯出 CSV") { _, _ -> exportCallsCsv() }
+                        .setNegativeButton("關閉", null)
+                        .show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, e.message ?: "無法載入", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun exportCallsCsv() {
+        thread {
+            try {
+                val bytes = ApiClient().downloadCallsCsv(engine.prefs.serverUrl, engine.prefs.token)
+                val text = bytes.toString(Charsets.UTF_8)
+                runOnUiThread {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/csv"
+                        putExtra(Intent.EXTRA_SUBJECT, "Geelo 通話紀錄")
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                    startActivity(Intent.createChooser(send, "匯出 CSV"))
+                }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, e.message ?: "無法匯出", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun startQrScan() {
+        AlertDialog.Builder(this)
+            .setTitle("掃描邀請 QR Code")
+            .setMessage("接下來會使用相機掃描頻道邀請 QR Code，讓你加入對講頻道。我們不會拍照或上傳畫面。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("繼續") { _, _ ->
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    launchScanner()
+                } else camLauncher.launch(Manifest.permission.CAMERA)
+            }
+            .show()
+    }
+
+    private fun launchScanner() {
+        val opt = ScanOptions()
+            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+            .setPrompt("掃描頻道邀請 QR Code")
+            .setBeepEnabled(false)
+            .setOrientationLocked(false)
+        qrLauncher.launch(opt)
+    }
+
+    private fun promptInviteCode() {
+        val input = EditText(this).apply { hint = "邀請碼或完整連結" }
+        AlertDialog.Builder(this)
+            .setTitle("輸入邀請碼")
+            .setView(input)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("加入") { _, _ -> handleInvite(input.text.toString()) }
+            .show()
+    }
+
+    private fun handleInvite(raw: String) {
+        val code = ApiClient.parseInviteCode(raw)
+        if (code.isNullOrBlank()) {
+            Toast.makeText(this, "邀請碼格式不正確", Toast.LENGTH_SHORT).show()
+            return
+        }
+        thread {
+            try {
+                val j = ApiClient().acceptInvite(engine.prefs.serverUrl, engine.prefs.token, code)
+                val ch = j.optJSONObject("channel")
+                val name = ch?.optString("name") ?: "頻道"
+                val id = ch?.optString("id").orEmpty()
+                runOnUiThread {
+                    Toast.makeText(this, "已加入 $name", Toast.LENGTH_SHORT).show()
+                    if (id.isNotBlank()) engine.join(id)
+                }
+            } catch (e: ApiClient.ApiError) {
+                runOnUiThread { Toast.makeText(this, e.display, Toast.LENGTH_LONG).show() }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, e.message ?: "無法加入", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
+    private fun showCreateInvite() {
+        val chans = engine.state.channels.filter {
+            engine.state.me?.role == "admin" || engine.state.me?.role == "org_admin" || it.myRole == "supervisor"
+        }
+        if (chans.isEmpty()) {
+            Toast.makeText(this, "沒有可邀請的頻道", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val spin = Spinner(this)
+        spin.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, chans.map { "# " + it.name })
+        val kindSpin = Spinner(this)
+        val kinds = listOf("加入頻道（已有帳號）" to "join", "邀請註冊（新人開帳號）" to "register")
+        kindSpin.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, kinds.map { it.first })
+        val hours = EditText(this).apply { hint = "有效時數（空白＝不限）"; inputType = android.text.InputType.TYPE_CLASS_NUMBER }
+        val uses = EditText(this).apply { hint = "次數上限（空白＝不限）"; inputType = android.text.InputType.TYPE_CLASS_NUMBER }
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 8)
+            addView(spin); addView(kindSpin); addView(hours); addView(uses)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("產生頻道邀請")
+            .setView(wrap)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("產生") { _, _ ->
+                val ch = chans.getOrNull(spin.selectedItemPosition) ?: return@setPositiveButton
+                val kind = kinds[kindSpin.selectedItemPosition].second
+                val h = hours.text.toString().toIntOrNull()
+                val u = uses.text.toString().toIntOrNull()
+                thread {
+                    try {
+                        val inv = ApiClient().createInvite(engine.prefs.serverUrl, engine.prefs.token, ch.id, kind, h, u)
+                        val url = inv.optString("url")
+                        runOnUiThread {
+                            AlertDialog.Builder(this)
+                                .setTitle("邀請已建立")
+                                .setMessage(url)
+                                .setPositiveButton("複製") { _, _ ->
+                                    val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                    cm.setPrimaryClip(android.content.ClipData.newPlainText("invite", url))
+                                    Toast.makeText(this, "已複製連結", Toast.LENGTH_SHORT).show()
+                                }
+                                .setNegativeButton("關閉", null)
+                                .show()
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { Toast.makeText(this, e.message ?: "無法產生", Toast.LENGTH_LONG).show() }
+                    }
+                }
+            }
+            .show()
+    }
+
 
     private fun openLegal(path: String) {
         val root = engine.prefs.serverUrl.trimEnd('/')
