@@ -70,7 +70,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 3. 開啟 Geelo，伺服器預設是 `https://ptt-prototype.onrender.com`。
-4. 公司代碼預設為 `DEMO`（必填）。用管理員在 [網頁後台](https://ptt-prototype.onrender.com/admin) 建立的帳號登入。舊版 APK 送的是 `company` 欄位，現在伺服器會回 `400 need_org`，請改用 0.2.0 之後的版本（本版為 0.3.0）。
+4. 公司代碼預設為 `DEMO`（必填）。用管理員在 [網頁後台](https://ptt-prototype.onrender.com/admin) 建立的帳號登入。舊版 APK 送的是 `company` 欄位，現在伺服器會回 `400 need_org`，請改用 0.2.0 之後的版本（本版為 0.3.1）。
 5. 請允許**麥克風**與**通知**（沒有麥克風權限就無法以麥克風類型啟動前景服務）。定位可稍後再允許。
 6. 登入後通知列會留下常駐通知，此時可以把 App 送到背景或鎖屏：應仍能聽到對講。通知上的「發話」是點一下開始／再點結束（通知列不好做「按住」）。藍牙耳機的播放／暫停或線控、以及部分三防機的 PTT 實體鍵則是按下開始、放開結束。
 
