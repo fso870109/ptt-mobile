@@ -23,7 +23,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="一鍵對講"
+            android:text="Geelo 吉洛"
             android:textColor="@color/text"
             android:textSize="28sp"
             android:textStyle="bold" />
@@ -32,7 +32,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="24dp"
-            android:text="原生 App · 可背景收聽"
+            android:text="即時對講 · 可背景收聽"
             android:textColor="@color/muted"
             android:textSize="14sp" />
 

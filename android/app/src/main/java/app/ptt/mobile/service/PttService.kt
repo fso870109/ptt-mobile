@@ -110,7 +110,7 @@ class PttService : Service(), PttEngine.Listener {
         )
         val n = NotificationCompat.Builder(this, CH_ALERT)
             .setSmallIcon(R.drawable.ic_stat_mic)
-            .setContentTitle("緊急警報")
+            .setContentTitle("Geelo · 緊急警報")
             .setContentText(text)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -251,9 +251,9 @@ class PttService : Service(), PttEngine.Listener {
         )
         val talkPi = pendingService(1, if (s.pressing) ACTION_PTT_STOP else ACTION_PTT_START)
         val title = when {
-            s.pressing && s.granted -> "正在發話"
-            s.conn == "on" -> "已連線 · ${s.target?.label() ?: "未選頻道"}"
-            else -> s.connText
+            s.pressing && s.granted -> "Geelo · 正在發話"
+            s.conn == "on" -> "Geelo · 已連線 · ${s.target?.label() ?: "未選頻道"}"
+            else -> "Geelo · ${s.connText}"
         }
         val text = engine.talkStatusText().ifBlank { "鎖屏或用耳機按鍵即可對講" }
         val builder = NotificationCompat.Builder(this, CH_CALL)

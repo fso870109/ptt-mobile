@@ -124,6 +124,6 @@ final class PttSystemChannel: NSObject, PTChannelManagerDelegate, PTChannelResto
     // MARK: Restoration
 
     func channelDescriptor(restoredChannelUUID channelUUID: UUID) -> PTChannelDescriptor {
-        PTChannelDescriptor(name: joinedName ?? "一鍵對講", image: UIImage(systemName: "dot.radiowaves.left.and.right"))
+        PTChannelDescriptor(name: joinedName ?? "Geelo", image: UIImage(systemName: "dot.radiowaves.left.and.right"))
     }
 }

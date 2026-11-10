@@ -8,8 +8,8 @@ struct LoginView: View {
         NavigationStack {
             VStack(spacing: 16) {
                 Text("📻").font(.system(size: 56))
-                Text("一鍵對講").font(.largeTitle.bold())
-                Text("原生 App · iOS 16+ PushToTalk").foregroundStyle(.secondary)
+                Text("Geelo 吉洛").font(.largeTitle.bold())
+                Text("即時對講 · iOS 16+ PushToTalk").foregroundStyle(.secondary)
                 TextField("伺服器網址", text: $engine.serverUrl)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
