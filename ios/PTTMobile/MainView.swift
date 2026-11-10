@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import AVFoundation
 
 struct MainView: View {
     @EnvironmentObject var engine: PttEngine
@@ -11,6 +12,11 @@ struct MainView: View {
     @State private var chatText = ""
     @State private var photoItem: PhotosPickerItem?
     @State private var showReport = false
+    @State private var showSettings = false
+    @State private var showMicWhy = false
+    @State private var showLocWhy = false
+    @State private var showPhotoWhy = false
+    @State private var showPhotoPicker = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,7 +27,7 @@ struct MainView: View {
                 Spacer()
                 Text((engine.me?.displayName ?? "") + (engine.me?.role == "admin" ? "（管理員）" : ""))
                     .font(.footnote)
-                Button("回報") { showReport = true }.font(.footnote)
+                Button("設定") { showSettings = true }.font(.footnote)
                 Button("登出") { engine.logout() }.font(.footnote)
             }.padding(.horizontal).padding(.top, 8)
 
@@ -85,7 +91,7 @@ struct MainView: View {
             }
 
             PttButton(label: engine.pttLabel, mode: engine.pttMode,
-                      onDown: { engine.pttDown() }, onUp: { engine.pttUp() })
+                      onDown: { requestTalk() }, onUp: { engine.pttUp() })
                 .padding(.vertical, 8)
 
             Text(engine.lastTalkText).font(.footnote).foregroundStyle(.secondary)
@@ -145,10 +151,38 @@ struct MainView: View {
             Text(engine.toast ?? "")
         }
         .sheet(isPresented: $showReport) { ReportSheet().environmentObject(engine) }
-            .sheet(item: $alertToShow) { a in
+        .sheet(isPresented: $showSettings) { SettingsSheet().environmentObject(engine) }
+        .sheet(item: $alertToShow) { a in
             AlertSheet(alert: a)
         }
+        .alert("需要使用麥克風", isPresented: $showMicWhy) {
+            Button("取消", role: .cancel) {}
+            Button("繼續") { engine.pttDown() }
+        } message: {
+            Text("按住講話時會使用麥克風，把你的聲音即時傳給頻道或私訊對象。語音只即時傳送，不會被錄音保存。")
+        }
+        .alert("分享目前位置", isPresented: $showLocWhy) {
+            Button("取消", role: .cancel) {}
+            Button("開啟") { engine.setShareLoc(true) }
+        } message: {
+            Text("開啟後，會把你目前的位置與電量分享給同頻道成員及公司管理員／調度員。系統只保留最新一筆，不建立移動軌跡。你可以隨時關閉。")
+        }
+        .alert("選擇照片", isPresented: $showPhotoWhy) {
+            Button("取消", role: .cancel) {}
+            Button("繼續") { showPhotoPicker = true }
+        } message: {
+            Text("接下來會開啟相簿，讓你選擇要傳送到這個對話的照片。我們不會讀取你相簿中的其他內容，照片最多保存 7 天。")
+        }
         .onChange(of: engine.alerts) { new in alertToShow = new.first }
+    }
+
+    private func requestTalk() {
+        switch AVAudioSession.sharedInstance().recordPermission {
+        case .undetermined:
+            showMicWhy = true
+        default:
+            engine.pttDown()
+        }
     }
 
     private var dispatchLabel: String {
@@ -186,11 +220,10 @@ struct MainView: View {
                     engine.sendChat(chatText)
                     chatText = ""
                 }
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Text("照片")
-                }
+                Button("照片") { showPhotoWhy = true }
             }
             .padding(8)
+            .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
             .onChange(of: photoItem) { item in
                 guard let item else { return }
                 Task {
@@ -264,7 +297,9 @@ struct MainView: View {
         List {
             Toggle("分享我的位置與電量", isOn: Binding(
                 get: { engine.shareLoc },
-                set: { engine.setShareLoc($0) }
+                set: { on in
+                    if on { showLocWhy = true } else { engine.setShareLoc(false) }
+                }
             ))
             Text(engine.locStatus).font(.caption).foregroundStyle(.secondary)
             ForEach(engine.locs) { l in
@@ -314,11 +349,69 @@ struct PttButton: View {
     }
 }
 
+struct SettingsSheet: View {
+    @EnvironmentObject var engine: PttEngine
+    @Environment(\.dismiss) private var dismiss
+    @State private var showReport = false
+    @State private var showDelete = false
+    @State private var password = ""
+    @State private var err = ""
+    @State private var deleting = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Button("回報問題") { showReport = true }
+                Button("隱私權政策") { open("/privacy") }
+                Button("服務條款") { open("/terms") }
+                Button("刪除帳號說明") { open("/delete-account") }
+                Button("刪除我的帳號") { showDelete = true }
+                    .foregroundStyle(.red)
+            }
+            .navigationTitle("設定")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
+            .sheet(isPresented: $showReport) { ReportSheet().environmentObject(engine) }
+            .alert("刪除我的帳號", isPresented: $showDelete) {
+                SecureField("輸入目前密碼以確認", text: $password)
+                Button("取消", role: .cancel) { password = ""; err = "" }
+                Button("確認刪除", role: .destructive) { Task { await doDelete() } }
+            } message: {
+                Text("此動作無法復原。我們會刪除你的帳號與個人資料，並將你送出的文字訊息匿名化。語音本來就不會保存。若你是公司最後一位管理員，系統會拒絕刪除。" + (err.isEmpty ? "" : "\n\n" + err))
+            }
+        }
+    }
+
+    private func open(_ path: String) {
+        var root = engine.serverUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        while root.hasSuffix("/") { root.removeLast() }
+        if let url = URL(string: root + path) {
+            UIApplication.shared.open(url)
+        }
+    }
+
+    private func doDelete() async {
+        let pw = password
+        password = ""
+        guard !pw.isEmpty else { err = "請輸入密碼"; showDelete = true; return }
+        deleting = true
+        let msg = await engine.deleteAccount(password: pw)
+        deleting = false
+        if let msg {
+            err = msg
+            showDelete = true
+        } else {
+            dismiss()
+        }
+    }
+}
+
 struct ReportSheet: View {
     @EnvironmentObject var engine: PttEngine
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var photoItem: PhotosPickerItem?
+    @State private var showShotWhy = false
+    @State private var showShotPicker = false
     @State private var shot: Data?
     @State private var err = ""
     @State private var sending = false
@@ -331,7 +424,7 @@ struct ReportSheet: View {
                     Text("系統會自動附上裝置、系統、App 版本與最近連線事件（不含 token、密碼或語音）。").font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("截圖（選填）") {
-                    PhotosPicker("選擇截圖", selection: $photoItem, matching: .images)
+                    Button("選擇截圖") { showShotWhy = true }
                     if shot != nil { Text("已選擇截圖").font(.footnote) }
                 }
                 if !err.isEmpty { Text(err).foregroundStyle(.red) }
@@ -342,6 +435,13 @@ struct ReportSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("送出") { Task { await send() } }.disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            }
+            .photosPicker(isPresented: $showShotPicker, selection: $photoItem, matching: .images)
+            .alert("附上截圖", isPresented: $showShotWhy) {
+                Button("取消", role: .cancel) {}
+                Button("繼續") { showShotPicker = true }
+            } message: {
+                Text("接下來會開啟相簿，讓你選擇要附在問題回報裡的截圖。我們不會讀取你相簿中的其他內容。")
             }
             .onChange(of: photoItem) { item in
                 Task {

@@ -14,6 +14,9 @@ enum ApiErrors {
         case "too_many_attempts": return fallback.isEmpty ? "嘗試次數過多，請稍後再試" : fallback
         case "too_many": return fallback.isEmpty ? "回報過於頻繁，請一小時後再試" : fallback
         case "too_large": return fallback.isEmpty ? "截圖請壓縮到約 300KB 以內" : fallback
+        case "wrong_password": return fallback.isEmpty ? "密碼錯誤" : fallback
+        case "last_admin": return fallback.isEmpty ? "你是此公司最後一位管理員，請先指定其他管理員" : fallback
+        case "platform_admin": return fallback.isEmpty ? "平台管理員請聯絡營運者處理帳號" : fallback
         default: return fallback.isEmpty ? error : fallback
         }
     }
@@ -65,6 +68,10 @@ final class ApiClient {
                                      body: ["conv": conv, "data": b64], token: token)
         guard let obj = json["message"] as? [String: Any] else { throw ApiError.decode }
         return JSONX.chat(obj)
+    }
+
+    func deleteAccount(baseUrl: String, token: String, password: String) async throws {
+        _ = try await request(baseUrl: baseUrl, method: "POST", path: "/api/me/delete", body: ["password": password], token: token)
     }
 
     func submitReport(baseUrl: String, token: String, text: String, screenshot: Data?, meta: [String: Any], log: [String]) async throws {

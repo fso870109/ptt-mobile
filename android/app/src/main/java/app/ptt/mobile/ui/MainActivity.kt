@@ -124,16 +124,38 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     }
 
     private fun requestPermsThenStart() {
-        val need = ArrayList<String>()
-        fun want(p: String) {
-            if (ContextCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED) need.add(p)
+        val need = talkPermissions().filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
-        want(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) want(Manifest.permission.POST_NOTIFICATIONS)
-        want(Manifest.permission.ACCESS_FINE_LOCATION)
-        want(Manifest.permission.ACCESS_COARSE_LOCATION)
-        if (Build.VERSION.SDK_INT >= 31) want(Manifest.permission.BLUETOOTH_CONNECT)
-        if (need.isNotEmpty()) permLauncher.launch(need.toTypedArray()) else startServiceAndBind()
+        if (need.isEmpty()) { startServiceAndBind(); return }
+        AlertDialog.Builder(this)
+            .setTitle("需要麥克風與通知")
+            .setMessage("對講時會使用麥克風，把你的聲音即時傳給頻道或私訊對象，語音不會被錄音保存。通知用來顯示正在收聽／發話的前景狀態。若你使用藍牙耳機或實體對講鍵，也需要「附近的裝置」權限。")
+            .setNegativeButton("先不要") { _, _ -> startServiceAndBind() }
+            .setPositiveButton("繼續") { _, _ -> permLauncher.launch(need.toTypedArray()) }
+            .show()
+    }
+
+    private fun talkPermissions(): Array<String> {
+        val list = ArrayList<String>()
+        list.add(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33) list.add(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= 31) list.add(Manifest.permission.BLUETOOTH_CONNECT)
+        return list.toTypedArray()
+    }
+
+    private fun locationPermissions(): Array<String> = arrayOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+    )
+
+    private val locLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        val ok = granted[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            granted[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (ok) engine.setShareLoc(true) else {
+            shareLoc.isChecked = false
+            Toast.makeText(this, "未允許位置，無法分享", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun startServiceAndBind() {
@@ -176,7 +198,7 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     }
 
     private fun setupUi() {
-        findViewById<TextView>(R.id.reportBtn).setOnClickListener { showReportDialog() }
+        findViewById<TextView>(R.id.settingsBtn).setOnClickListener { showSettings() }
         findViewById<TextView>(R.id.logout).setOnClickListener {
             val prefs = engine.prefs
             val url = prefs.serverUrl
@@ -259,7 +281,21 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
         }
 
         backToChannel.setOnClickListener { engine.backToChannel() }
-        shareLoc.setOnCheckedChangeListener { _, checked -> engine.setShareLoc(checked) }
+        shareLoc.setOnCheckedChangeListener { _, checked ->
+            if (!checked) { engine.setShareLoc(false); return@setOnCheckedChangeListener }
+            AlertDialog.Builder(this)
+                .setTitle("分享目前位置")
+                .setMessage("開啟後，會把你目前的位置與電量分享給同頻道成員及公司管理員／調度員。系統只保留最新一筆，不建立移動軌跡。你可以隨時關閉。")
+                .setNegativeButton("取消") { _, _ -> shareLoc.isChecked = false }
+                .setPositiveButton("開啟") { _, _ ->
+                    val need = locationPermissions().filter {
+                        ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+                    }
+                    if (need.isEmpty()) engine.setShareLoc(true)
+                    else locLauncher.launch(need.toTypedArray())
+                }
+                .show()
+        }
         alertBanner.setOnClickListener { engine.state.alerts.firstOrNull()?.let { showAlert(it) } }
     }
 
@@ -495,6 +531,68 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             return true
         }
         return super.onKeyUp(keyCode, event)
+    }
+
+
+    private fun showSettings() {
+        val items = arrayOf("回報問題", "隱私權政策", "服務條款", "刪除帳號說明", "刪除我的帳號")
+        AlertDialog.Builder(this)
+            .setTitle("設定")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> showReportDialog()
+                    1 -> openLegal("/privacy")
+                    2 -> openLegal("/terms")
+                    3 -> openLegal("/delete-account")
+                    4 -> showDeleteAccount()
+                }
+            }
+            .setNegativeButton("關閉", null)
+            .show()
+    }
+
+    private fun openLegal(path: String) {
+        val root = engine.prefs.serverUrl.trimEnd('/')
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(root + path)))
+    }
+
+    private fun showDeleteAccount() {
+        val input = EditText(this).apply {
+            hint = "輸入目前密碼以確認"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 8)
+            addView(TextView(this@MainActivity).apply {
+                text = "此動作無法復原。我們會刪除你的帳號與個人資料，並將你送出的文字訊息匿名化。語音本來就不會保存。若你是公司最後一位管理員，系統會拒絕刪除。"
+            })
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("刪除我的帳號")
+            .setView(wrap)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("確認刪除") { _, _ ->
+                val pw = input.text.toString()
+                if (pw.isBlank()) { Toast.makeText(this, "請輸入密碼", Toast.LENGTH_SHORT).show(); return@setPositiveButton }
+                thread {
+                    try {
+                        ApiClient().deleteAccount(engine.prefs.serverUrl, engine.prefs.token, pw)
+                        runOnUiThread {
+                            Toast.makeText(this, "帳號已刪除", Toast.LENGTH_SHORT).show()
+                            PttService.stop(this)
+                            engine.disconnect(clearAuth = true)
+                            goLogin()
+                        }
+                    } catch (e: ApiClient.ApiError) {
+                        runOnUiThread { Toast.makeText(this, e.display, Toast.LENGTH_LONG).show() }
+                    } catch (e: Exception) {
+                        runOnUiThread { Toast.makeText(this, e.message ?: "刪除失敗", Toast.LENGTH_LONG).show() }
+                    }
+                }
+            }
+            .show()
     }
 
     private fun showReportDialog() {

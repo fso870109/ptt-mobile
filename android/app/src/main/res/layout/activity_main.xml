@@ -40,11 +40,11 @@
             android:textSize="13sp" />
 
         <TextView
-            android:id="@+id/reportBtn"
+            android:id="@+id/settingsBtn"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:padding="8dp"
-            android:text="回報"
+            android:text="設定"
             android:textColor="@color/sky"
             android:textSize="13sp" />
 

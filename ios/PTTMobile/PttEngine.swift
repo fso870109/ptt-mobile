@@ -212,6 +212,16 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
         for (conv, text) in q { sendChat(text, conv: conv) }
     }
 
+    func deleteAccount(password: String) async -> String? {
+        do {
+            try await ApiClient.shared.deleteAccount(baseUrl: serverUrl, token: token, password: password)
+            await MainActor.run { self.disconnect(clearAuth: true) }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
     func submitReport(text: String, screenshot: Data?) async -> String? {
         var shot = screenshot
         if let screenshot, screenshot.count > 300 * 1024 {

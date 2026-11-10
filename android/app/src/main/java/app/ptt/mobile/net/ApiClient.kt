@@ -22,6 +22,9 @@ object ApiErrors {
         "too_many_attempts" -> fallback.ifBlank { "嘗試次數過多，請稍後再試" }
         "too_many" -> fallback.ifBlank { "回報過於頻繁，請一小時後再試" }
         "too_large" -> fallback.ifBlank { "截圖請壓縮到約 300KB 以內" }
+        "wrong_password" -> fallback.ifBlank { "密碼錯誤" }
+        "last_admin" -> fallback.ifBlank { "你是此公司最後一位管理員，請先指定其他管理員" }
+        "platform_admin" -> fallback.ifBlank { "平台管理員請聯絡營運者處理帳號" }
         else -> fallback.ifBlank { error }
     }
 }
@@ -64,6 +67,10 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
         val body = JSONObject().put("conv", conv).put("data", b64)
         val json = request(baseUrl, "POST", "/api/photos", body, token)
         return JsonX.chat(json.getJSONObject("message"))
+    }
+
+    fun deleteAccount(baseUrl: String, token: String, password: String): JSONObject {
+        return request(baseUrl, "POST", "/api/me/delete", JSONObject().put("password", password), token)
     }
 
     fun submitReport(baseUrl: String, token: String, text: String, screenshotJpeg: ByteArray?, meta: JSONObject, log: List<String>): JSONObject {
