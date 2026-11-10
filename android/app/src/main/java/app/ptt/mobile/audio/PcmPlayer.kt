@@ -72,7 +72,7 @@ class PcmPlayer {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
             var primed = false
             var buffered = 0
-            val preroll = FRAME_BYTES * 2 // ~200ms
+            var preroll = FRAME_BYTES * 2 // 約 200ms，欠載時加大到 400ms 以吸收遲到／丟包
             val hold = ArrayList<ByteArray>()
             val t = track
             while (running && t != null) {
@@ -80,10 +80,11 @@ class PcmPlayer {
                 if (!running) break
                 if (pkt == null) {
                     if (primed && q.isEmpty()) {
-                        // underrun: next packet will re-prime
+                        // underrun: next packet will re-prime with a slightly larger jitter buffer
                         primed = false
                         buffered = 0
                         hold.clear()
+                        preroll = minOf(FRAME_BYTES * 4, preroll + FRAME_BYTES)
                     }
                     continue
                 }

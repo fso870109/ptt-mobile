@@ -10,6 +10,7 @@ struct MainView: View {
     @State private var alertToShow: AlertInfo?
     @State private var chatText = ""
     @State private var photoItem: PhotosPickerItem?
+    @State private var showReport = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -20,6 +21,7 @@ struct MainView: View {
                 Spacer()
                 Text((engine.me?.displayName ?? "") + (engine.me?.role == "admin" ? "（管理員）" : ""))
                     .font(.footnote)
+                Button("回報") { showReport = true }.font(.footnote)
                 Button("登出") { engine.logout() }.font(.footnote)
             }.padding(.horizontal).padding(.top, 8)
 
@@ -142,7 +144,8 @@ struct MainView: View {
         } message: {
             Text(engine.toast ?? "")
         }
-        .sheet(item: $alertToShow) { a in
+        .sheet(isPresented: $showReport) { ReportSheet().environmentObject(engine) }
+            .sheet(item: $alertToShow) { a in
             AlertSheet(alert: a)
         }
         .onChange(of: engine.alerts) { new in alertToShow = new.first }
@@ -308,6 +311,55 @@ struct PttButton: View {
                         if down { down = false; onUp() }
                     }
             )
+    }
+}
+
+struct ReportSheet: View {
+    @EnvironmentObject var engine: PttEngine
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var photoItem: PhotosPickerItem?
+    @State private var shot: Data?
+    @State private var err = ""
+    @State private var sending = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("問題說明") {
+                    TextEditor(text: $text).frame(minHeight: 120)
+                    Text("系統會自動附上裝置、系統、App 版本與最近連線事件（不含 token、密碼或語音）。").font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("截圖（選填）") {
+                    PhotosPicker("選擇截圖", selection: $photoItem, matching: .images)
+                    if shot != nil { Text("已選擇截圖").font(.footnote) }
+                }
+                if !err.isEmpty { Text(err).foregroundStyle(.red) }
+            }
+            .navigationTitle("回報問題")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("送出") { Task { await send() } }.disabled(sending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onChange(of: photoItem) { item in
+                Task {
+                    if let item, let data = try? await item.loadTransferable(type: Data.self) {
+                        shot = ApiClient.compressJPEG(data, maxBytes: 300 * 1024) ?? data
+                    }
+                }
+            }
+        }
+    }
+
+    func send() async {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { err = "請填寫問題說明"; return }
+        sending = true
+        let msg = await engine.submitReport(text: body, screenshot: shot)
+        sending = false
+        if let msg { err = msg } else { dismiss() }
     }
 }
 

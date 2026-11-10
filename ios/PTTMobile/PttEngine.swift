@@ -2,6 +2,7 @@ import Foundation
 import UIKit
 import CoreLocation
 import Combine
+import Network
 
 /// Shared protocol engine used by the SwiftUI UI and the PushToTalk callbacks.
 @MainActor
@@ -43,10 +44,15 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
     private let audio = PcmAudio()
     private let defaults = UserDefaults.standard
     private var retry = 0
+    private var connectGen = 0
     private var authFailed = false
     private var lastPong = Date()
+    private var lastRtt: Int?
     private var pending: [Data] = []
     private var pendingConv = ""
+    private var chatQueue: [(String, String)] = []
+    private var pathMonitor: NWPathMonitor?
+    private var lastPath = ""
     private var lastTalks: [String: LastTalk] = [:]
     private var pingTimer: Timer?
     private var reconnectWork: DispatchWorkItem?
@@ -69,6 +75,7 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
         locManager.delegate = self
         locManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         wireSystemPTT()
+        startPathMonitor()
     }
 
     func prepareAtLaunch() {
@@ -140,8 +147,10 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
             return
         }
         reconnectWork?.cancel()
+        connectGen += 1
         conn = "wait"
         connText = retry > 0 ? "重新連線中…（第 \(retry) 次）" : "連線中…"
+        EventLog.add("ws", retry > 0 ? "reconnect attempt \(retry)" : "connecting")
         ws.connect(url: url)
     }
 
@@ -180,12 +189,82 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
         refreshPttLabel()
     }
 
-    func sendChat(_ text: String) {
-        guard let conv = target?.conv else { toast = "請先選擇頻道"; return }
+    func sendChat(_ text: String, conv convOpt: String? = nil) {
+        guard let conv = convOpt ?? target?.conv else { toast = "請先選擇頻道"; return }
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return }
         if t.count > 2000 { toast = "文字最多 2000 字"; return }
+        if conn != "on" || !ws.isOpen {
+            chatQueue.append((conv, t))
+            EventLog.add("chat", "queued while offline n=\(chatQueue.count)")
+            toast = "目前斷線，文字會在重連後自動送出（\(chatQueue.count)）"
+            return
+        }
         ws.send(json: ["t": "chat", "conv": conv, "text": t])
+        EventLog.add("chat", "sent")
+    }
+
+    private func flushChatQueue() {
+        guard !chatQueue.isEmpty else { return }
+        let q = chatQueue
+        chatQueue.removeAll()
+        EventLog.add("chat", "flush \(q.count)")
+        for (conv, text) in q { sendChat(text, conv: conv) }
+    }
+
+    func submitReport(text: String, screenshot: Data?) async -> String? {
+        var shot = screenshot
+        if let screenshot, screenshot.count > 300 * 1024 {
+            shot = ApiClient.compressJPEG(screenshot, maxBytes: 300 * 1024)
+        }
+        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let meta: [String: Any] = [
+            "platform": "ios",
+            "device": UIDevice.current.model,
+            "os": "iOS " + UIDevice.current.systemVersion,
+            "appVersion": ver,
+            "browser": "",
+            "userAgent": "app.ptt.mobile"
+        ]
+        do {
+            try await ApiClient.shared.submitReport(baseUrl: serverUrl, token: token, text: text, screenshot: shot, meta: meta, log: EventLog.dump())
+            EventLog.add("report", "submitted")
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    func forceReconnect(reason: String) {
+        EventLog.add("net", reason)
+        retry = 0
+        if granted { toast = "偵測到網路切換，已安全結束發話並重新連線" }
+        internalStop(sendStop: true, viaSystem: false)
+        reconnectWork?.cancel()
+        ws.close()
+        connect()
+    }
+
+    private func startPathMonitor() {
+        guard pathMonitor == nil else { return }
+        let mon = NWPathMonitor()
+        pathMonitor = mon
+        mon.pathUpdateHandler = { [weak self] path in
+            let kind: String
+            if path.usesInterfaceType(.wifi) { kind = "wifi" }
+            else if path.usesInterfaceType(.cellular) { kind = "cellular" }
+            else if path.status == .satisfied { kind = "other" }
+            else { kind = "none" }
+            Task { @MainActor in
+                guard let self else { return }
+                EventLog.add("net", "path \(kind) status=\(path.status)")
+                if !self.lastPath.isEmpty && self.lastPath != kind && kind != "none" {
+                    self.forceReconnect("network \(self.lastPath)->\(kind)")
+                }
+                self.lastPath = kind
+            }
+        }
+        mon.start(queue: DispatchQueue.global(qos: .utility))
     }
 
     func callDispatch() {
@@ -315,8 +394,12 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
     // MARK: WebSocket
 
     func wsDidOpen() {
-        retry = 0
-        ws.send(json: ["t": "hello", "token": token])
+        EventLog.add("ws", "open, hello+resume")
+        var hello: [String: Any] = ["t": "hello", "token": token]
+        if let ch = defaults.string(forKey: "channel"), !ch.isEmpty {
+            hello["resume"] = ["channel": ch]
+        }
+        ws.send(json: hello)
         pingTimer?.invalidate()
         pingTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -338,18 +421,28 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
 
     func wsDidClose(code: Int, reason: String) {
         pingTimer?.invalidate()
-        if pressing { internalStop(sendStop: false, viaSystem: false) }
+        EventLog.add("ws", "close code=\(code) \(reason)")
+        let wasGranted = granted
+        if pressing || granted {
+            internalStop(sendStop: false, viaSystem: false)
+            toast = wasGranted ? "連線中斷，已安全結束發話（發言權已釋放）" : "連線中斷，發話尚未送出"
+        }
         if authFailed || code == 4001 || code == 4003 {
             conn = "off"; connText = "請重新登入"; talks = [:]
             if authFailed { token = ""; defaults.removeObject(forKey: "token") }
             return
         }
-        let delay = min(10.0, pow(1.6, Double(retry)))
+        let base = min(10.0, pow(1.6, Double(retry)))
+        let delay = base * (0.7 + Double.random(in: 0...0.6))
         retry += 1
         conn = "off"
         connText = "已斷線，\(Int(delay)) 秒後重連"
         talks = [:]
-        let work = DispatchWorkItem { [weak self] in Task { @MainActor in self?.connect() } }
+        let genAtClose = connectGen
+        let work = DispatchWorkItem { [weak self] in Task { @MainActor in
+            guard let self, self.connectGen == genAtClose else { return }
+            self.connect()
+        } }
         reconnectWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
@@ -357,7 +450,14 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
     private func handle(_ m: [String: Any]) {
         let t = m["t"] as? String ?? ""
         switch t {
-        case "pong": lastPong = Date()
+        case "pong":
+            lastPong = Date()
+            if let ts = m["ts"] as? Int64 {
+                lastRtt = max(0, Int(Date().timeIntervalSince1970 * 1000) - Int(ts))
+            } else if let ts = m["ts"] as? Int {
+                lastRtt = max(0, Int(Date().timeIntervalSince1970 * 1000) - ts)
+            }
+            connText = connQualityText()
         case "auth_failed":
             authFailed = true
             token = ""
@@ -377,12 +477,15 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
             online = JSONX.arr(m, "online").map(JSONX.online)
             alerts = JSONX.arr(m, "alerts").map(JSONX.alert)
             channels.forEach { if let lt = $0.lastTalk { lastTalks[$0.id] = lt } }
-            conn = "on"; connText = "已連線"
-            let want = defaults.string(forKey: "channel") ?? "lobby"
+            EventLog.add("ws", "welcome resumed=\((m["resumedChannel"] as? String) ?? "")")
+            conn = "on"; connText = connQualityText()
+            let resumed = m["resumedChannel"] as? String
+            let want = defaults.string(forKey: "channel") ?? resumed ?? "lobby"
             let ok = channels.first(where: { $0.id == want })?.id ?? channels.first?.id
-            if let ok { join(channelId: ok) }
+            if let ok, ok != resumed { join(channelId: ok) }
             if shareLoc { startLoc() }
             refreshPttLabel()
+            flushChatQueue()
         case "channels":
             channels = JSONX.arr(m, "channels").map(JSONX.channel)
             refreshPttLabel()
@@ -530,6 +633,15 @@ final class PttEngine: NSObject, ObservableObject, WebSocketClientDelegate, CLLo
         default:
             break
         }
+    }
+
+    private func connQualityText() -> String {
+        guard let rtt = lastRtt else { return "已連線" }
+        let q: String
+        if rtt < 80 { q = "訊號良好（\(rtt) ms）" }
+        else if rtt < 200 { q = "訊號尚可（\(rtt) ms）" }
+        else { q = "訊號較弱（\(rtt) ms）" }
+        return "已連線 · " + q
     }
 
     var talkStatusText: String {

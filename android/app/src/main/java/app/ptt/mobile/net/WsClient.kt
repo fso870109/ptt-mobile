@@ -50,11 +50,13 @@ class WsClient(
                 webSocket.close(code, reason)
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (socket !== webSocket && socket != null) return
                 opened.set(false)
                 if (socket === webSocket) socket = null
                 listener.onClosed(code, reason)
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (socket !== webSocket && socket != null) return
                 opened.set(false)
                 if (socket === webSocket) socket = null
                 listener.onFailure(t)

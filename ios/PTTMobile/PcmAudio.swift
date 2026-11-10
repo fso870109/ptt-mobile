@@ -12,6 +12,8 @@ final class PcmAudio {
     private var converter: AVAudioConverter?
     private var started = false
     private var nextTime: AVAudioTime?
+    private var targetJitter = 0.18
+    private var underruns = 0
     var onCapture: ((Data) -> Void)?
 
     func startEngine() throws {
@@ -49,6 +51,8 @@ final class PcmAudio {
         engine.stop()
         started = false
         nextTime = nil
+        targetJitter = 0.18
+        underruns = 0
     }
 
     /// Play incoming s16le mono 16k (payload only, no streamId prefix).
@@ -65,8 +69,9 @@ final class PcmAudio {
         }
         let now = player.lastRenderTime ?? AVAudioTime(hostTime: mach_absolute_time())
         if nextTime == nil || (nextTime!.isHostTimeValid && nextTime!.hostTime < now.hostTime) {
-            // 180ms jitter buffer
-            let delay = AVAudioTime.hostTime(forSeconds: 0.18)
+            underruns += 1
+            targetJitter = min(0.40, 0.18 + Double(underruns) * 0.03)
+            let delay = AVAudioTime.hostTime(forSeconds: targetJitter)
             nextTime = AVAudioTime(hostTime: now.hostTime + delay)
         }
         if let t = nextTime {

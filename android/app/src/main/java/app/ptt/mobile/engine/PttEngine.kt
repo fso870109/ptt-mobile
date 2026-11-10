@@ -1,6 +1,9 @@
 package app.ptt.mobile.engine
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -89,9 +92,14 @@ class PttEngine private constructor(private val app: Context) {
     fun removeListener(l: Listener) { listeners.remove(l) }
 
     private var retry = 0
+    private var connectGen = 0
     private var authFailed = false
     private var lastPong = System.currentTimeMillis()
+    private var lastRtt: Long? = null
     private var pending = ArrayList<ByteArray>()
+    private val chatQueue = ArrayList<Pair<String, String>>()
+    private var netCb: ConnectivityManager.NetworkCallback? = null
+    private var lastNetKind = ""
     private var pendingConv = ""
     private var streamId = 0
     private val lastTalks = HashMap<String, LastTalk>()
@@ -122,13 +130,18 @@ class PttEngine private constructor(private val app: Context) {
             return
         }
         reconnectToken?.let { main.removeCallbacks(it) }
+        watchNetwork()
+        connectGen += 1
         val url = ApiClient.wsUrl(prefs.serverUrl)
         val waitText = if (retry > 0) "重新連線中…（第 $retry 次）" else "連線中…"
         publish(state.copy(conn = "wait", connText = waitText, authLost = false))
+        EventLog.add("ws", if (retry > 0) "reconnect attempt $retry" else "connecting")
         ws.connect(url, object : WsClient.Listener {
             override fun onOpen() {
-                retry = 0
-                ws.sendJson("t" to "hello", "token" to token)
+                EventLog.add("ws", "open, hello+resume")
+                val hello = org.json.JSONObject().put("t", "hello").put("token", token)
+                if (prefs.channel.isNotBlank()) hello.put("resume", org.json.JSONObject().put("channel", prefs.channel))
+                ws.sendJson(hello)
                 main.removeCallbacks(pingTick)
                 main.post(pingTick)
             }
@@ -172,12 +185,83 @@ class PttEngine private constructor(private val app: Context) {
         loadMessagesFor(t?.conv())
     }
 
-    fun sendChat(text: String) {
-        val conv = state.target?.conv() ?: run { toast("請先選擇頻道"); return }
+    fun sendChat(text: String, convOpt: String? = null) {
+        val conv = convOpt ?: state.target?.conv() ?: run { toast("請先選擇頻道"); return }
         val t = text.trim()
         if (t.isEmpty()) return
         if (t.length > 2000) { toast("文字最多 2000 字"); return }
+        if (state.conn != "on" || !ws.isOpen) {
+            synchronized(chatQueue) { chatQueue.add(conv to t) }
+            EventLog.add("chat", "queued while offline n=${chatQueue.size}")
+            toast("目前斷線，文字會在重連後自動送出（${chatQueue.size}）")
+            return
+        }
         ws.sendJson("t" to "chat", "conv" to conv, "text" to t)
+        EventLog.add("chat", "sent")
+    }
+
+    private fun flushChatQueue() {
+        val q: List<Pair<String, String>>
+        synchronized(chatQueue) {
+            q = chatQueue.toList()
+            chatQueue.clear()
+        }
+        if (q.isEmpty()) return
+        EventLog.add("chat", "flush ${q.size}")
+        for ((conv, text) in q) sendChat(text, conv)
+    }
+
+    fun submitReport(text: String, screenshotJpeg: ByteArray?, onDone: (String?) -> Unit) {
+        thread {
+            try {
+                val meta = org.json.JSONObject()
+                    .put("platform", "android")
+                    .put("device", android.os.Build.MODEL)
+                    .put("os", "Android " + android.os.Build.VERSION.RELEASE)
+                    .put("appVersion", app.packageManager.getPackageInfo(app.packageName, 0).versionName ?: "")
+                    .put("browser", "")
+                    .put("userAgent", "app.ptt.mobile")
+                api.submitReport(prefs.serverUrl, prefs.token, text, screenshotJpeg, meta, EventLog.dump())
+                main.post { EventLog.add("report", "submitted"); onDone(null) }
+            } catch (e: ApiClient.ApiError) {
+                main.post { onDone(e.display) }
+            } catch (e: Exception) {
+                main.post { onDone(e.message ?: "送出失敗") }
+            }
+        }
+    }
+
+    fun forceReconnect(reason: String) {
+        EventLog.add("net", reason)
+        retry = 0
+        if (state.granted) toast("偵測到網路切換，已安全結束發話並重新連線")
+        internalStopTalk(sendStop = true)
+        reconnectToken?.let { main.removeCallbacks(it) }
+        ws.close()
+        connect()
+    }
+
+    private fun watchNetwork() {
+        if (netCb != null) return
+        val cm = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                val caps = cm.getNetworkCapabilities(network)
+                val kind = when {
+                    caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "wifi"
+                    caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "cellular"
+                    else -> "other"
+                }
+                EventLog.add("net", "available $kind")
+                if (lastNetKind.isNotEmpty() && lastNetKind != kind) {
+                    main.post { forceReconnect("network $lastNetKind->$kind") }
+                }
+                lastNetKind = kind
+            }
+            override fun onLost(network: Network) { EventLog.add("net", "lost") }
+        }
+        netCb = cb
+        try { cm.registerDefaultNetworkCallback(cb) } catch (_: Exception) {}
     }
 
     fun callDispatch() {
@@ -311,7 +395,12 @@ class PttEngine private constructor(private val app: Context) {
 
     private fun handle(m: JSONObject) {
         when (m.optString("t")) {
-            "pong" -> lastPong = System.currentTimeMillis()
+            "pong" -> {
+                lastPong = System.currentTimeMillis()
+                val ts = m.optLong("ts", 0L)
+                if (ts > 0) lastRtt = (System.currentTimeMillis() - ts).coerceAtLeast(0)
+                publish(state.copy(conn = "on", connText = connQualityText()))
+            }
             "auth_failed" -> {
                 authFailed = true
                 prefs.clearSession()
@@ -322,6 +411,7 @@ class PttEngine private constructor(private val app: Context) {
             "welcome" -> {
                 retry = 0
                 lastPong = System.currentTimeMillis()
+                EventLog.add("ws", "welcome resumed=" + m.optString("resumedChannel"))
                 val user = JsonX.user(m.getJSONObject("user"))
                 val channels = JsonX.channels(m.optJSONArray("channels"))
                 val dms = JsonX.dms(m.optJSONArray("dms"))
@@ -331,7 +421,7 @@ class PttEngine private constructor(private val app: Context) {
                 publish(
                     state.copy(
                         conn = "on",
-                        connText = "已連線",
+                        connText = connQualityText(),
                         me = user,
                         channels = channels,
                         dms = dms,
@@ -340,13 +430,15 @@ class PttEngine private constructor(private val app: Context) {
                         authLost = false,
                     ).withPttLabel()
                 )
-                val want = prefs.channel.ifBlank { "lobby" }
+                val resumed = m.optString("resumedChannel")
+                val want = prefs.channel.ifBlank { resumed.ifBlank { "lobby" } }
                 val ok = channels.find { it.id == want }?.id ?: channels.firstOrNull()?.id
-                if (ok != null) join(ok)
+                if (ok != null && ok != resumed) join(ok)
                 if (prefs.shareLoc) {
                     locReporter.start()
                     publish(state.copy(shareLoc = true, locStatus = "定位中…"))
                 }
+                flushChatQueue()
             }
             "channels" -> {
                 val channels = JsonX.channels(m.optJSONArray("channels"))
@@ -539,17 +631,35 @@ class PttEngine private constructor(private val app: Context) {
 
     private fun onDisco(code: Int, reason: String) {
         main.removeCallbacks(pingTick)
-        if (state.pressing) internalStopTalk(sendStop = false)
+        EventLog.add("ws", "close code=$code $reason")
+        val wasGranted = state.granted
+        if (state.pressing || state.granted) {
+            internalStopTalk(sendStop = false)
+            if (wasGranted) toast("連線中斷，已安全結束發話（發言權已釋放）")
+            else toast("連線中斷，發話尚未送出")
+        }
         if (authFailed || code == 4001 || code == 4003) {
             publish(state.copy(conn = "off", connText = "請重新登入", talks = emptyMap(), authLost = true))
             return
         }
-        val delay = min(10_000.0, 1000 * 1.6.pow(retry.toDouble())).toLong()
+        val base = min(10_000.0, 1000 * 1.6.pow(retry.toDouble()))
+        val delay = (base * (0.7 + Math.random() * 0.6)).toLong()
         retry += 1
         publish(state.copy(conn = "off", connText = "已斷線，${(delay / 1000)} 秒後重連", talks = emptyMap()))
-        val r = Runnable { connect() }
+        val genAtClose = connectGen
+        val r = Runnable { if (connectGen == genAtClose) connect() }
         reconnectToken = r
         main.postDelayed(r, delay)
+    }
+
+    private fun connQualityText(): String {
+        val rtt = lastRtt ?: return "已連線"
+        val q = when {
+            rtt < 80 -> "訊號良好（${rtt} ms）"
+            rtt < 200 -> "訊號尚可（${rtt} ms）"
+            else -> "訊號較弱（${rtt} ms）"
+        }
+        return "已連線 · $q"
     }
 
     private fun sendLoc(lat: Double, lng: Double, acc: Float?, battery: Double?, charging: Boolean?) {

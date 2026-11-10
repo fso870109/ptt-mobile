@@ -12,6 +12,8 @@ enum ApiErrors {
         case "org_inactive": return fallback.isEmpty ? "此公司已停用或方案到期" : fallback
         case "seat_limit": return fallback.isEmpty ? "已達此公司方案的人數上限" : fallback
         case "too_many_attempts": return fallback.isEmpty ? "嘗試次數過多，請稍後再試" : fallback
+        case "too_many": return fallback.isEmpty ? "回報過於頻繁，請一小時後再試" : fallback
+        case "too_large": return fallback.isEmpty ? "截圖請壓縮到約 300KB 以內" : fallback
         default: return fallback.isEmpty ? error : fallback
         }
     }
@@ -63,6 +65,12 @@ final class ApiClient {
                                      body: ["conv": conv, "data": b64], token: token)
         guard let obj = json["message"] as? [String: Any] else { throw ApiError.decode }
         return JSONX.chat(obj)
+    }
+
+    func submitReport(baseUrl: String, token: String, text: String, screenshot: Data?, meta: [String: Any], log: [String]) async throws {
+        var body: [String: Any] = ["text": text, "meta": meta, "log": log]
+        if let screenshot { body["screenshot"] = screenshot.base64EncodedString() }
+        _ = try await request(baseUrl: baseUrl, method: "POST", path: "/api/reports", body: body, token: token)
     }
 
     func getPhoto(baseUrl: String, token: String, photoId: String) async throws -> Data {
@@ -128,7 +136,7 @@ final class ApiClient {
             q -= 0.12
             out = scaled.jpegData(compressionQuality: q)
         }
-        if let bytes = out, bytes.count <= 220 * 1024 { return bytes }
+        if let bytes = out, bytes.count <= max(maxBytes + 20 * 1024, 220 * 1024) { return bytes }
         return nil
     }
 }

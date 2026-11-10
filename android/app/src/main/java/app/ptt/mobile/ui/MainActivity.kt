@@ -89,6 +89,21 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
         }
     }
 
+    private var pendingReportShot: ByteArray? = null
+    private var reportShotLabel: TextView? = null
+    private val pickReportShot = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        thread {
+            try {
+                val bytes = ImageCompressor.compress(this, uri, maxBytes = 300 * 1024)
+                pendingReportShot = bytes
+                runOnUiThread { reportShotLabel?.text = "已選擇截圖（${bytes.size / 1024} KB）" }
+            } catch (e: Exception) {
+                runOnUiThread { Toast.makeText(this, "無法處理截圖：${e.message}", Toast.LENGTH_LONG).show() }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         engine = PttEngine.get(this)
@@ -161,6 +176,7 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     }
 
     private fun setupUi() {
+        findViewById<TextView>(R.id.reportBtn).setOnClickListener { showReportDialog() }
         findViewById<TextView>(R.id.logout).setOnClickListener {
             val prefs = engine.prefs
             val url = prefs.serverUrl
@@ -479,5 +495,47 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             return true
         }
         return super.onKeyUp(keyCode, event)
+    }
+
+    private fun showReportDialog() {
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 8)
+        }
+        val hint = TextView(this).apply {
+            text = "請描述發生了什麼。可選擇附上截圖。系統會自動附上裝置型號、系統、App 版本與最近的連線事件（不含 token、密碼或語音）。"
+            textSize = 13f
+        }
+        val input = EditText(this).apply {
+            hint = "請描述問題…"
+            minLines = 4
+            maxLines = 8
+        }
+        val shotInfo = TextView(this).apply { text = "尚未選擇截圖"; textSize = 12f }
+        reportShotLabel = shotInfo
+        pendingReportShot = null
+        val pick = TextView(this).apply {
+            text = "選擇截圖（選填）"
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.sky))
+            setPadding(0, 16, 0, 8)
+            setOnClickListener { pickReportShot.launch("image/*") }
+        }
+        wrap.addView(hint); wrap.addView(input); wrap.addView(pick); wrap.addView(shotInfo)
+        AlertDialog.Builder(this)
+            .setTitle("回報問題")
+            .setView(wrap)
+            .setNegativeButton("取消", null)
+            .setPositiveButton("送出") { _, _ ->
+                val text = input.text.toString().trim()
+                if (text.isEmpty()) {
+                    Toast.makeText(this, "請填寫問題說明", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                engine.submitReport(text, pendingReportShot) { err ->
+                    if (err == null) Toast.makeText(this, "已送出回報，謝謝", Toast.LENGTH_SHORT).show()
+                    else Toast.makeText(this, err, Toast.LENGTH_LONG).show()
+                }
+            }
+            .show()
     }
 }

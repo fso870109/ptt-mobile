@@ -20,6 +20,8 @@ object ApiErrors {
         "org_inactive" -> fallback.ifBlank { "此公司已停用或方案到期" }
         "seat_limit" -> fallback.ifBlank { "已達此公司方案的人數上限" }
         "too_many_attempts" -> fallback.ifBlank { "嘗試次數過多，請稍後再試" }
+        "too_many" -> fallback.ifBlank { "回報過於頻繁，請一小時後再試" }
+        "too_large" -> fallback.ifBlank { "截圖請壓縮到約 300KB 以內" }
         else -> fallback.ifBlank { error }
     }
 }
@@ -62,6 +64,14 @@ class ApiClient(private val http: OkHttpClient = defaultClient()) {
         val body = JSONObject().put("conv", conv).put("data", b64)
         val json = request(baseUrl, "POST", "/api/photos", body, token)
         return JsonX.chat(json.getJSONObject("message"))
+    }
+
+    fun submitReport(baseUrl: String, token: String, text: String, screenshotJpeg: ByteArray?, meta: JSONObject, log: List<String>): JSONObject {
+        val arr = org.json.JSONArray()
+        log.forEach { arr.put(it) }
+        val body = JSONObject().put("text", text).put("meta", meta).put("log", arr)
+        if (screenshotJpeg != null) body.put("screenshot", android.util.Base64.encodeToString(screenshotJpeg, android.util.Base64.NO_WRAP))
+        return request(baseUrl, "POST", "/api/reports", body, token)
     }
 
     fun getPhoto(baseUrl: String, token: String, photoId: String): ByteArray {

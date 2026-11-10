@@ -25,7 +25,8 @@ object ImageCompressor {
             out = baos.toByteArray()
             q -= 12
         } while (out.size > maxBytes && q >= 40)
-        if (out.size > 220 * 1024) throw IllegalArgumentException("照片仍超過 200KB，請換一張較小的圖")
+        val cap = maxBytes + 20 * 1024
+        if (out.size > cap) throw IllegalArgumentException("圖片仍超過限制，請換一張較小的圖")
         return out
     }
 }
