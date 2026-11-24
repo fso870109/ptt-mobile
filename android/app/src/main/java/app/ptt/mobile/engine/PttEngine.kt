@@ -76,6 +76,10 @@ class PttEngine private constructor(private val app: Context) {
         val dispatchId: String? = null,
         val toast: String? = null,
         val authLost: Boolean = false,
+        val talkMode: String = "hold",   // 設定：hold / lock / vox
+        val talkKind: String = "hold",   // 這次發話的方式
+        val locked: Boolean = false,     // 鎖定講話中
+        val voxArmed: Boolean = false,   // 聲控待命中
     )
 
     @Volatile var state = UiState()
@@ -104,6 +108,39 @@ class PttEngine private constructor(private val app: Context) {
     private var streamId = 0
     private val lastTalks = HashMap<String, LastTalk>()
     private var reconnectToken: Runnable? = null
+
+    // ---- 持續說話（鎖定講話／聲控）----
+    /** 即時音量（0～100）與是否超過聲控門檻；只給畫面上的音量表用，不走 publish 以免頻繁重繪 */
+    @Volatile var levelListener: ((Int, Boolean) -> Unit)? = null
+    @Volatile private var micOn = false
+    @Volatile private var voxArmedFlag = false
+    @Volatile private var levelTest = false
+    private var voxConv = ""
+    private var voxAboveSince = 0L
+    private var voxLastLoud = 0L
+    private var voxCooldownUntil = 0L
+    private var voxNeedSilence = false
+    private val preroll = ArrayList<ByteArray>()
+    private var downAt = 0L
+    private var keyDown = false
+    private var ignoreUp = false
+    private var manualInVox = false
+    private var maxMs = 60_000L
+    private var talkStartedAt = 0L
+    private val holdRunnable = Runnable { if (keyDown && state.talkMode == "vox") { manualInVox = true; startTalk("hold") } }
+    private val talkTick = object : Runnable {
+        override fun run() {
+            if (!state.granted) return
+            if (System.currentTimeMillis() - talkStartedAt > maxMs + 2_000) {
+                EventLog.add("talk", "local max reached")
+                internalStopTalk(sendStop = true)
+                toast("已達單次發話上限 ${maxMs / 1000} 秒")
+                return
+            }
+            publish(state.withPttLabel())
+            main.postDelayed(this, 1_000)
+        }
+    }
     private var pingToken: Runnable? = null
 
     private val pingTick = object : Runnable {
@@ -120,6 +157,10 @@ class PttEngine private constructor(private val app: Context) {
             pingToken = this
             main.postDelayed(this, 15_000)
         }
+    }
+
+    init {
+        state = state.copy(talkMode = prefs.talkMode)
     }
 
     fun connect() {
@@ -153,6 +194,9 @@ class PttEngine private constructor(private val app: Context) {
     }
 
     fun disconnect(clearAuth: Boolean = false) {
+        internalStopTalk(sendStop = true)
+        disarmVox(null)
+        levelTest = false
         reconnectToken?.let { main.removeCallbacks(it) }
         main.removeCallbacks(pingTick)
         internalStopTalk(sendStop = true)
@@ -175,6 +219,7 @@ class PttEngine private constructor(private val app: Context) {
         val ids = listOf(state.me?.id ?: "", peerId).sorted()
         val conv = "dm:${ids[0]}:${ids[1]}"
         publish(state.copy(target = Target.DmT(peerId, peerName, conv)).withPttLabel())
+        afterTargetChange()
         loadMessagesFor(conv)
     }
 
@@ -182,6 +227,7 @@ class PttEngine private constructor(private val app: Context) {
         val ch = state.channels.find { it.id == state.channelId }
         val t = if (ch != null) Target.ChannelT(ch.id, ch.name) else state.target
         publish(state.copy(target = t).withPttLabel())
+        afterTargetChange()
         loadMessagesFor(t?.conv())
     }
 
@@ -300,46 +346,233 @@ class PttEngine private constructor(private val app: Context) {
         }
     }
 
-    fun startTalk(@Suppress("UNUSED_PARAMETER") source: String = "ui") {
+    /** 相容舊呼叫（耳機、通知等）：直接開始一段發話 */
+    fun startTalk(source: String = "ui") { startTalkKind(if (state.talkMode == "lock") "lock" else "hold", source) }
+
+    private fun startTalkKind(kind: String, source: String): Boolean {
         val s = state
-        if (s.pressing) return
-        if (s.conn != "on") { toast("尚未連線"); return }
-        val target = s.target ?: run { toast("請先選擇頻道"); return }
+        if (s.pressing) return false
+        if (s.conn != "on") { if (kind != "vox") toast("尚未連線"); return false }
+        val target = s.target ?: run { if (kind != "vox") toast("請先選擇頻道"); return false }
         if (myRole() == "listener" && myAlert() == null) {
-            toast("你在這個頻道是「只聽」角色，不能發話")
-            return
+            if (kind != "vox") toast("你在這個頻道是「只聽」角色，不能發話")
+            return false
         }
         val conv = target.conv()
-        pending = ArrayList()
+        synchronized(pending) {
+            pending = ArrayList()
+            if (kind == "vox") synchronized(preroll) { pending.addAll(preroll); preroll.clear() }
+        }
         pendingConv = conv
         streamId = 0
-        publish(s.copy(pressing = true, granted = false, pttMode = "requesting", pttLabel = "連線中…"))
-        vibrate(20)
-        trySco(true)
-        val started = recorder.start { pcm ->
-            if (state.granted && ws.isOpen) {
-                ws.sendBinary(pcm)
-            } else if (state.pressing && !state.granted) {
-                synchronized(pending) {
-                    pending.add(pcm)
-                    if (pending.size > 30) pending.removeAt(0)
-                }
-            }
-        }
-        if (!started) {
+        publish(s.copy(pressing = true, granted = false, talkKind = kind, pttMode = "requesting", pttLabel = "連線中…"))
+        if (kind != "vox") vibrate(20)
+        if (!ensureMic()) {
             toast("無法開啟麥克風")
             internalStopTalk(sendStop = false)
-            return
+            return false
         }
+        EventLog.add("talk", "start $kind $source")
         when (target) {
-            is Target.DmT -> ws.sendJson("t" to "ptt_start", "to" to target.peerId)
-            is Target.ChannelT -> ws.sendJson("t" to "ptt_start", "conv" to target.id)
+            is Target.DmT -> ws.sendJson("t" to "ptt_start", "to" to target.peerId, "mode" to kind)
+            is Target.ChannelT -> ws.sendJson("t" to "ptt_start", "conv" to target.id, "mode" to kind)
         }
+        return true
     }
 
     fun stopTalk(@Suppress("UNUSED_PARAMETER") source: String = "ui") {
-        if (!state.pressing) return
+        if (!state.pressing && !state.locked) return
         internalStopTalk(sendStop = true)
+    }
+
+    /** 主按鈕或實體 PTT 鍵按下：依「講話方式」決定行為 */
+    fun pttDown(source: String = "ui") {
+        if (keyDown) return
+        keyDown = true; downAt = System.currentTimeMillis(); ignoreUp = false
+        val s = state
+        if (s.locked) { EventLog.add("talk", "unlock tap"); internalStopTalk(sendStop = true); ignoreUp = true; return }
+        when (s.talkMode) {
+            "vox" -> {
+                if (s.pressing && s.talkKind == "vox") { internalStopTalk(sendStop = true); voxNeedSilence = true }
+                main.removeCallbacks(holdRunnable)
+                main.postDelayed(holdRunnable, TAP_MS)
+            }
+            "lock" -> startTalkKind("lock", source)
+            else -> startTalkKind("hold", source)
+        }
+    }
+
+    /** 主按鈕或實體 PTT 鍵放開 */
+    fun pttUp(@Suppress("UNUSED_PARAMETER") source: String = "ui") {
+        if (!keyDown) return
+        keyDown = false
+        main.removeCallbacks(holdRunnable)
+        if (ignoreUp) { ignoreUp = false; return }
+        val quick = System.currentTimeMillis() - downAt < TAP_MS
+        when (state.talkMode) {
+            "vox" -> {
+                if (manualInVox) { manualInVox = false; internalStopTalk(sendStop = true); return }
+                if (quick) toggleVox()
+            }
+            "lock" -> {
+                if (quick && state.pressing) {
+                    EventLog.add("talk", "locked")
+                    vibrate(30)
+                    publish(state.copy(locked = true, talkKind = "lock").withPttLabel())
+                } else internalStopTalk(sendStop = true)
+            }
+            else -> internalStopTalk(sendStop = true)
+        }
+    }
+
+    /** 通知列／耳機的「發話／結束」切換：等同鎖定講話 */
+    fun toggleLock(source: String = "notification") {
+        if (state.pressing || state.locked) { internalStopTalk(sendStop = true); return }
+        if (startTalkKind("lock", source)) publish(state.copy(locked = true).withPttLabel())
+    }
+
+    fun setTalkMode(mode: String) {
+        if (mode !in Prefs.TALK_MODES) return
+        if (state.pressing || state.locked) internalStopTalk(sendStop = true)
+        if (mode != "vox") disarmVox(null)
+        prefs.talkMode = mode
+        publish(state.copy(talkMode = mode).withPttLabel())
+    }
+
+    fun setVoxSens(v: Int) { prefs.voxSens = v }
+    fun voxThresholdDb(): Double = -20.0 - prefs.voxSens * 0.4
+    fun dbToPct(db: Double): Int = (((db + 60.0) / 60.0) * 100).toInt().coerceIn(0, 100)
+
+    fun toggleVox() { if (voxArmedFlag) disarmVox("聲控已關閉") else armVox() }
+
+    fun armVox(): Boolean {
+        if (voxArmedFlag) return true
+        val t = state.target ?: run { toast("請先加入頻道"); return false }
+        if (myRole() == "listener" && myAlert() == null) { toast("你在這個頻道是「只聽」角色，不能使用聲控"); return false }
+        voxArmedFlag = true
+        voxConv = t.conv(); voxAboveSince = 0; voxLastLoud = 0; voxCooldownUntil = 0; voxNeedSilence = false
+        synchronized(preroll) { preroll.clear() }
+        if (!ensureMic()) { voxArmedFlag = false; toast("無法開啟麥克風"); return false }
+        EventLog.add("talk", "vox armed")
+        publish(state.copy(voxArmed = true, toast = "聲控已開啟：有說話聲就會自動發送").withPttLabel())
+        return true
+    }
+
+    fun disarmVox(msg: String?) {
+        if (!voxArmedFlag) return
+        voxArmedFlag = false
+        synchronized(preroll) { preroll.clear() }
+        if (state.pressing && state.talkKind == "vox") internalStopTalk(sendStop = true)
+        EventLog.add("talk", "vox off")
+        releaseMicIfIdle()
+        levelListener?.invoke(0, false)
+        publish(state.copy(voxArmed = false, toast = msg ?: state.toast).withPttLabel())
+    }
+
+    /** 設定頁「測試麥克風音量」 */
+    fun setLevelTest(on: Boolean): Boolean {
+        levelTest = on
+        if (on) return ensureMic()
+        releaseMicIfIdle(); return true
+    }
+
+    private fun ensureMic(): Boolean {
+        if (micOn) return true
+        trySco(true)
+        val ok = recorder.start { pcm -> onMicFrame(pcm) }
+        micOn = ok
+        if (!ok) trySco(false)
+        return ok
+    }
+
+    private fun releaseMicIfIdle() {
+        if (!micOn || state.pressing || voxArmedFlag || levelTest) return
+        recorder.stop()
+        micOn = false
+        trySco(false)
+    }
+
+    /** 麥克風每 100ms 一包（錄音執行緒） */
+    private fun onMicFrame(pcm: ByteArray) {
+        val st = state
+        if (st.pressing && st.granted && ws.isOpen) {
+            ws.sendBinary(pcm)
+        } else if (st.pressing && !st.granted) {
+            synchronized(pending) {
+                pending.add(pcm)
+                if (pending.size > 30) pending.removeAt(0)
+            }
+        } else if (voxArmedFlag) {
+            synchronized(preroll) {
+                preroll.add(pcm)
+                while (preroll.size > VOX_PREROLL) preroll.removeAt(0)
+            }
+        }
+        if (voxArmedFlag || levelTest) {
+            val db = rmsDb(pcm)
+            val over = db > voxThresholdDb()
+            val pct = dbToPct(db)
+            main.post {
+                levelListener?.invoke(pct, over)
+                if (voxArmedFlag) voxTick(db)
+            }
+        }
+    }
+
+    private fun rmsDb(pcm: ByteArray): Double {
+        var sum = 0.0
+        val n = pcm.size / 2
+        if (n == 0) return -100.0
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val v = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort() / 32768.0
+            sum += v * v
+            i += 2
+        }
+        return 20 * kotlin.math.log10(kotlin.math.sqrt(sum / n) + 1e-9)
+    }
+
+    private fun canVoxTalk(): Boolean {
+        val s = state
+        if (s.conn != "on" || s.target == null) return false
+        if (myRole() == "listener" && myAlert() == null) return false
+        val busy = s.target.conv().let { s.talks[it] }
+        return !(busy != null && busy.from != s.me?.id) // 別人說話時不觸發，也避免把喇叭聲當成自己說話
+    }
+
+    private fun voxTick(db: Double) {
+        val now = System.currentTimeMillis()
+        val loud = db > voxThresholdDb()
+        if (loud) voxLastLoud = now
+        if (voxNeedSilence) {
+            if (!loud && now - voxLastLoud > 1_000) voxNeedSilence = false
+            voxAboveSince = 0
+            return
+        }
+        val s = state
+        if (s.pressing) {
+            if (s.talkKind == "vox" && now - voxLastLoud > VOX_HANG_MS) {
+                EventLog.add("talk", "vox hang release")
+                internalStopTalk(sendStop = true)
+            }
+            return
+        }
+        if (!loud) { voxAboveSince = 0; return }
+        if (voxAboveSince == 0L) voxAboveSince = now
+        if (now - voxAboveSince >= VOX_ATTACK_MS && now >= voxCooldownUntil && canVoxTalk()) {
+            voxAboveSince = 0
+            startTalkKind("vox", "vox")
+        }
+    }
+
+    /** 換頻道或換私人對講：結束進行中的鎖定／聲控發話，並關閉聲控，避免講到別的地方 */
+    private fun afterTargetChange() {
+        val conv = state.target?.conv() ?: ""
+        if ((state.pressing || state.locked) && pendingConv.isNotEmpty() && pendingConv != conv) {
+            EventLog.add("talk", "stop on switch")
+            internalStopTalk(sendStop = true)
+        }
+        if (voxArmedFlag && voxConv != conv) disarmVox("已切換對話，聲控已關閉；需要時請再開啟")
     }
 
     fun setShareLoc(on: Boolean) {
@@ -379,11 +612,14 @@ class PttEngine private constructor(private val app: Context) {
     }
 
     private fun internalStopTalk(sendStop: Boolean) {
-        recorder.stop()
-        trySco(false)
-        if (sendStop && ws.isOpen) ws.sendJson("t" to "ptt_stop")
+        main.removeCallbacks(talkTick)
+        talkStartedAt = 0
+        val was = state.pressing
+        if (sendStop && was && ws.isOpen) ws.sendJson("t" to "ptt_stop")
         synchronized(pending) { pending.clear() }
-        publish(state.copy(pressing = false, granted = false).withPttLabel())
+        state = state.copy(pressing = false, granted = false, locked = false)
+        releaseMicIfIdle()
+        publish(state.withPttLabel())
     }
 
     private fun handleBinary(data: ByteArray) {
@@ -450,6 +686,7 @@ class PttEngine private constructor(private val app: Context) {
                 val chId = if (m.has("channel") && !m.isNull("channel")) m.optString("channel") else null
                 if (chId.isNullOrBlank()) {
                     publish(state.copy(channelId = null, target = null, toast = "你已沒有任何頻道的權限").withPttLabel())
+                    afterTargetChange()
                     return
                 }
                 if (m.optString("reason") == "access_changed") toast("頻道權限已變更，已移回「大廳」")
@@ -458,6 +695,7 @@ class PttEngine private constructor(private val app: Context) {
                 val keepDm = state.target is Target.DmT
                 val target = if (keepDm) state.target else Target.ChannelT(chId, ch?.name ?: chId)
                 publish(state.copy(channelId = chId, target = target).withPttLabel())
+                afterTargetChange()
                 if (!keepDm) loadMessagesFor(chId)
             }
             "members" -> {
@@ -473,20 +711,33 @@ class PttEngine private constructor(private val app: Context) {
                     return
                 }
                 streamId = m.optInt("streamId")
+                maxMs = m.optLong("maxMs", 60_000L).coerceAtLeast(5_000L)
+                talkStartedAt = System.currentTimeMillis()
+                main.removeCallbacks(talkTick)
+                main.postDelayed(talkTick, 1_000)
                 val toFlush: List<ByteArray>
                 synchronized(pending) {
                     toFlush = pending.toList()
                     pending.clear()
                 }
-                publish(state.copy(granted = true, pttMode = "talking", pttLabel = "說話中… 放開結束"))
+                publish(state.copy(granted = true).withPttLabel())
                 for (p in toFlush) ws.sendBinary(p)
                 vibrate(40)
             }
             "floor_denied" -> {
                 val reason = m.optString("reason")
                 val byName = m.optString("byName")
+                val kind = state.talkKind
                 internalStopTalk(sendStop = false)
+                if (kind == "vox" || m.optString("mode") == "vox") {
+                    // 聲控：不跳干擾提示，稍等再試；冷卻中要先安靜一下
+                    voxCooldownUntil = System.currentTimeMillis() + if (reason == "cooldown") m.optLong("retryMs", 3_000L) else 1_500L
+                    if (reason == "cooldown") voxNeedSilence = true
+                    if (reason != "busy" && reason != "cooldown") toast("聲控無法發話：" + when (reason) { "listen_only" -> "你是「只聽」角色"; "offline" -> "對方不在線"; else -> reason })
+                    return
+                }
                 when (reason) {
+                    "cooldown" -> toast("剛達到發話上限，請等 ${(m.optLong("retryMs", 3_000L) + 999) / 1000} 秒再講，讓其他人有機會說話")
                     "busy" -> {
                         publish(state.copy(pttMode = "busy", pttLabel = "${byName.ifBlank { "有人" }} 正在說話"))
                         vibrate(30)
@@ -501,11 +752,18 @@ class PttEngine private constructor(private val app: Context) {
             "floor_revoked" -> {
                 val reason = m.optString("reason")
                 val byName = m.optString("byName")
+                val kind = state.talkKind
+                if (keyDown) ignoreUp = true // 還按著也要停，放開時不要當成「點一下」
+                manualInVox = false
                 internalStopTalk(sendStop = false)
+                if (kind == "vox" || voxArmedFlag) {
+                    voxNeedSilence = true
+                    voxCooldownUntil = System.currentTimeMillis() + m.optLong("cooldownMs", 1_500L)
+                }
                 when (reason) {
-                    "preempted" -> toast("⚠️ 你的發話被 $byName 中斷（優先權較高）")
+                    "preempted" -> { toast("⚠️ 你的發話被 $byName 中斷（優先權較高）"); vibrate(120) }
                     "stalled" -> toast("網路不穩，語音中斷，已結束發話")
-                    else -> toast("已達單次發話上限 60 秒")
+                    else -> toast("已達單次發話上限 ${m.optLong("maxMs", maxMs) / 1000} 秒，已自動結束，讓其他人說話")
                 }
             }
             "talk_start" -> {
@@ -711,16 +969,31 @@ class PttEngine private constructor(private val app: Context) {
         val last = conv?.let { lastTalks[it] }
         val lastText = if (last == null) "這裡還沒有人說話"
         else "最近說話：${if (last.from == me?.id) "我" else last.fromName} · ${fmtDur(last.durMs)}"
-        if (pressing && granted) return copy(pttMode = "talking", pttLabel = "說話中… 放開結束", lastTalkText = lastText)
-        if (pressing) return copy(pttMode = "requesting", pttLabel = "連線中…", lastTalkText = lastText)
+        if (pressing && granted) {
+            val left = if (talkStartedAt > 0) ((maxMs - (System.currentTimeMillis() - talkStartedAt)) / 1000).coerceAtLeast(0) else maxMs / 1000
+            val warn = if (talkStartedAt > 0 && left <= 10) "（剩 $left 秒）" else ""
+            val lbl = when {
+                talkKind == "vox" -> "🗣️ 聲控發話中$warn"
+                locked -> "🔒 鎖定講話中$warn\n再按一下結束"
+                else -> "說話中… 放開結束$warn"
+            }
+            return copy(pttMode = if (locked) "locked" else "talking", pttLabel = lbl, lastTalkText = lastText)
+        }
+        if (pressing) return copy(pttMode = "requesting", pttLabel = if (locked) "🔒 鎖定中，等待發言權…" else "連線中…", lastTalkText = lastText)
+        val idle = when (talkMode) {
+            "lock" -> "點一下開始講\n長按也能講"
+            "vox" -> if (voxArmed) "🎧 聲控待命中\n點一下關閉" else "點一下開啟聲控\n長按可直接講"
+            else -> "按住講話"
+        }
         val label = when {
             listen -> "只聽（不能發話）"
             busy != null -> "${busy.fromName} 正在說話"
-            else -> "按住講話"
+            else -> idle
         }
         val mode = when {
             listen -> "listen"
             busy != null -> "busy"
+            voxArmed -> "vox"
             else -> "idle"
         }
         return copy(pttMode = mode, pttLabel = label, lastTalkText = lastText)
@@ -783,6 +1056,10 @@ class PttEngine private constructor(private val app: Context) {
     }
 
     companion object {
+        const val TAP_MS = 400L          // 鎖定模式：按下不到這個時間就放開＝鎖定；按久＝按住講話
+        const val VOX_ATTACK_MS = 80L    // 音量超過門檻持續這麼久才發話
+        const val VOX_HANG_MS = 900L     // 安靜這麼久才放掉發言權
+        const val VOX_PREROLL = 3        // 發話前保留約 0.3 秒聲音
         @Volatile private var inst: PttEngine? = null
         fun get(ctx: Context): PttEngine =
             inst ?: synchronized(this) { inst ?: PttEngine(ctx.applicationContext).also { inst = it } }

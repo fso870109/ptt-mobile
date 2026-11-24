@@ -23,22 +23,22 @@ class PttButtonReceiver : BroadcastReceiver() {
             "com.sonim.intent.action.PTT_KEY_UP",
         )
         when (action) {
-            in downActions -> engine.startTalk("hw")
-            in upActions -> engine.stopTalk("hw")
+            in downActions -> engine.pttDown("hw")
+            in upActions -> engine.pttUp("hw")
             else -> {
                 val ke = key(intent)
                 if (ke != null) {
-                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) engine.startTalk("hw")
-                    else if (ke.action == KeyEvent.ACTION_UP) engine.stopTalk("hw")
+                    if (ke.action == KeyEvent.ACTION_DOWN && ke.repeatCount == 0) engine.pttDown("hw")
+                    else if (ke.action == KeyEvent.ACTION_UP) engine.pttUp("hw")
                     return
                 }
                 val state = intent.getIntExtra("state", -1)
                 when (state) {
-                    1 -> engine.startTalk("hw")
-                    0 -> engine.stopTalk("hw")
+                    1 -> engine.pttDown("hw")
+                    0 -> engine.pttUp("hw")
                     else -> {
                         // unknown payload: treat as toggle
-                        if (engine.state.pressing) engine.stopTalk("hw") else engine.startTalk("hw")
+                        engine.toggleLock("hw")
                     }
                 }
             }

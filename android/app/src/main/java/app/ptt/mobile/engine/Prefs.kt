@@ -32,6 +32,16 @@ class Prefs(ctx: Context) {
         get() = p.getBoolean("shareLoc", false)
         set(v) { p.edit().putBoolean("shareLoc", v).apply() }
 
+    /** 講話方式：hold＝按住講話、lock＝鎖定講話、vox＝聲控 */
+    var talkMode: String
+        get() = (p.getString("talkMode", "hold") ?: "hold").let { if (it in TALK_MODES) it else "hold" }
+        set(v) { p.edit().putString("talkMode", if (v in TALK_MODES) v else "hold").apply() }
+
+    /** 聲控靈敏度 0～100（越大越容易觸發） */
+    var voxSens: Int
+        get() = p.getInt("voxSens", 50).coerceIn(0, 100)
+        set(v) { p.edit().putInt("voxSens", v.coerceIn(0, 100)).apply() }
+
     fun clearSession() {
         p.edit().remove("token").apply()
     }
@@ -39,5 +49,6 @@ class Prefs(ctx: Context) {
     companion object {
         const val DEFAULT_SERVER = "https://ptt-prototype.onrender.com"
         const val DEFAULT_ORG = "DEMO"
+        val TALK_MODES = listOf("hold", "lock", "vox")
     }
 }

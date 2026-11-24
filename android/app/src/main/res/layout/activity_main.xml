@@ -226,6 +226,31 @@
             android:textStyle="bold" />
     </FrameLayout>
 
+    <ProgressBar
+        android:id="@+id/voxMeter"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="168dp"
+        android:layout_height="8dp"
+        android:layout_gravity="center_horizontal"
+        android:max="100"
+        android:progress="0"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/modeChip"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_card"
+        android:gravity="center"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:text="講話方式：按住講話 ⚙"
+        android:textColor="@color/text"
+        android:textSize="15sp" />
+
     <TextView
         android:id="@+id/lastTalk"
         android:layout_width="match_parent"

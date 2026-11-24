@@ -33,6 +33,9 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import android.widget.ArrayAdapter
 import android.widget.Spinner
+import android.widget.ProgressBar
+import android.widget.SeekBar
+import android.view.Gravity
 import app.ptt.mobile.service.PttKeys
 import app.ptt.mobile.service.PttService
 import com.google.android.material.materialswitch.MaterialSwitch
@@ -72,6 +75,9 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     private lateinit var backToChannel: TextView
     private lateinit var talkStatus: TextView
     private lateinit var pttBtn: TextView
+    private lateinit var voxMeter: ProgressBar
+    private lateinit var modeChip: TextView
+    private var dialogLevel: ((Int, Boolean) -> Unit)? = null
     private lateinit var lastTalk: TextView
     private lateinit var sosBtn: TextView
     private lateinit var shareLoc: MaterialSwitch
@@ -124,6 +130,8 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     }
 
     override fun onDestroy() {
+        engine.levelListener = null
+        engine.setLevelTest(false)
         engine.removeListener(this)
         super.onDestroy()
     }
@@ -205,6 +213,8 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
         backToChannel = findViewById(R.id.backToChannel)
         talkStatus = findViewById(R.id.talkStatus)
         pttBtn = findViewById(R.id.pttBtn)
+        voxMeter = findViewById(R.id.voxMeter)
+        modeChip = findViewById(R.id.modeChip)
         lastTalk = findViewById(R.id.lastTalk)
         sosBtn = findViewById(R.id.sosBtn)
         shareLoc = findViewById(R.id.shareLoc)
@@ -256,11 +266,11 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     v.parent?.requestDisallowInterceptTouchEvent(true)
-                    engine.startTalk("ui")
+                    engine.pttDown("ui")
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    engine.stopTalk("ui")
+                    engine.pttUp("ui")
                     true
                 }
                 else -> false
@@ -295,6 +305,11 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
         }
 
         backToChannel.setOnClickListener { engine.backToChannel() }
+        modeChip.setOnClickListener { showTalkModeDialog() }
+        engine.levelListener = { pct, over ->
+            if (engine.state.voxArmed) voxMeter.progress = pct
+            dialogLevel?.invoke(pct, over)
+        }
         shareLoc.setOnCheckedChangeListener { _, checked ->
             if (!checked) { engine.setShareLoc(false); return@setOnCheckedChangeListener }
             AlertDialog.Builder(this)
@@ -359,9 +374,14 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
             else -> "呼叫調度台"
         }
         pttBtn.text = s.pttLabel
+        modeChip.text = "講話方式：" + talkModeLabel(s.talkMode) + (if (s.talkMode == "vox") (if (s.voxArmed) "（開啟中）" else "（關閉）") else "") + " ⚙"
+        voxMeter.visibility = if (s.voxArmed) View.VISIBLE else View.GONE
+        if (!s.voxArmed) voxMeter.progress = 0
         pttBtn.setBackgroundResource(
             when (s.pttMode) {
                 "talking" -> R.drawable.bg_ptt_talk
+                "locked" -> R.drawable.bg_ptt_locked
+                "vox" -> R.drawable.bg_ptt_vox
                 "busy", "requesting" -> R.drawable.bg_ptt_busy
                 "listen" -> R.drawable.bg_ptt_listen
                 else -> R.drawable.bg_ptt
@@ -533,7 +553,7 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         if (PttKeys.isPttKey(keyCode) && event.repeatCount == 0) {
-            engine.startTalk("hw")
+            engine.pttDown("hw")
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -541,7 +561,7 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
         if (PttKeys.isPttKey(keyCode)) {
-            engine.stopTalk("hw")
+            engine.pttUp("hw")
             return true
         }
         return super.onKeyUp(keyCode, event)
@@ -555,13 +575,14 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
     }
 
     private fun showSettings() {
-        val items = mutableListOf("回報問題", "通話紀錄", "掃描邀請碼", "輸入邀請碼", "外觀")
+        val items = mutableListOf("講話方式（按住／鎖定／聲控）", "回報問題", "通話紀錄", "掃描邀請碼", "輸入邀請碼", "外觀")
         if (canCreateInvite()) items.add("產生頻道邀請")
         items.addAll(listOf("隱私權政策", "服務條款", "刪除帳號說明", "刪除我的帳號"))
         AlertDialog.Builder(this)
             .setTitle("設定")
             .setItems(items.toTypedArray()) { _, which ->
                 when (items[which]) {
+                    "講話方式（按住／鎖定／聲控）" -> showTalkModeDialog()
                     "回報問題" -> showReportDialog()
                     "通話紀錄" -> showCallLogs()
                     "掃描邀請碼" -> startQrScan()
@@ -575,6 +596,118 @@ class MainActivity : AppCompatActivity(), PttEngine.Listener {
                 }
             }
             .setNegativeButton("關閉", null)
+            .show()
+    }
+
+    private fun talkModeLabel(m: String) = when (m) {
+        "lock" -> "鎖定講話"
+        "vox" -> "聲控"
+        else -> "按住講話"
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    /** 講話方式：三個大按鈕＋聲控靈敏度與音量表 */
+    private fun showTalkModeDialog() {
+        val pad = dp(16)
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, dp(8), pad, 0) }
+        val modes = listOf(
+            Triple("hold", "✋ 按住講話", "按住說話，放開就結束"),
+            Triple("lock", "🔒 鎖定講話", "點一下開始一直講，再點一下結束；按住不放仍是按住講話"),
+            Triple("vox", "🗣️ 聲控", "點一下開啟，偵測到說話聲就自動發送，安靜約 1 秒自動結束；長按可直接講"),
+        )
+        val buttons = ArrayList<Pair<String, TextView>>()
+        val voxBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, 0) }
+        fun refresh() {
+            val cur = engine.state.talkMode
+            for ((m, b) in buttons) {
+                b.isSelected = m == cur
+                b.alpha = if (m == cur) 1f else 0.75f
+                b.setBackgroundResource(if (m == cur) R.drawable.bg_input else R.drawable.bg_card)
+                b.text = (if (m == cur) "● " else "○ ") + modes.first { it.first == m }.second + "\n" + modes.first { it.first == m }.third
+            }
+            voxBox.visibility = if (cur == "vox") View.VISIBLE else View.GONE
+        }
+        for ((m, _, _) in modes) {
+            val b = TextView(this).apply {
+                textSize = 17f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text))
+                setPadding(dp(14), dp(14), dp(14), dp(14))
+                minHeight = dp(64)
+                gravity = Gravity.CENTER_VERTICAL
+                setOnClickListener {
+                    engine.setTalkMode(m)
+                    refresh()
+                    Toast.makeText(this@MainActivity, "講話方式：" + talkModeLabel(m), Toast.LENGTH_SHORT).show()
+                }
+            }
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(8) }
+            root.addView(b, lp)
+            buttons.add(m to b)
+        }
+        val sensLabel = TextView(this).apply { textSize = 15f; setTextColor(ContextCompat.getColor(this@MainActivity, R.color.text)) }
+        fun setSensText(v: Int) { sensLabel.text = "聲控靈敏度：$v（越大越容易觸發）" }
+        setSensText(engine.prefs.voxSens)
+        val seek = SeekBar(this).apply {
+            max = 100; progress = engine.prefs.voxSens
+            minimumHeight = dp(40)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, v: Int, fromUser: Boolean) { engine.setVoxSens(v); setSensText(v) }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) {}
+            })
+        }
+        val meter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
+        val meterText = TextView(this).apply { textSize = 13f; setTextColor(ContextCompat.getColor(this@MainActivity, R.color.muted)) }
+        fun thrText() = "門檻約在 ${engine.dbToPct(engine.voxThresholdDb())}%：音量超過門檻就會發送。環境吵就把靈敏度調低。"
+        meterText.text = thrText()
+        val test = TextView(this).apply {
+            text = "測試麥克風音量"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundResource(R.drawable.bg_card)
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.sky))
+        }
+        var testing = false
+        test.setOnClickListener {
+            if (!testing) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    Toast.makeText(this, "請先允許麥克風權限", Toast.LENGTH_LONG).show(); return@setOnClickListener
+                }
+                testing = engine.setLevelTest(true)
+                test.text = if (testing) "停止測試" else "無法開啟麥克風"
+            } else {
+                testing = false; engine.setLevelTest(false); test.text = "測試麥克風音量"; meter.progress = 0
+            }
+        }
+        dialogLevel = { pct, over ->
+            meter.progress = pct
+            meterText.text = (if (over) "🟠 超過門檻，會發送　" else "🟢 未達門檻　") + thrText()
+        }
+        val note = TextView(this).apply {
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.muted))
+            text = "聲控開啟時麥克風會在本機一直聽（鎖屏或切到背景也會繼續，通知列會顯示「聲控開啟中」並可關閉），比較耗電。聲音只在超過門檻時即時傳出，不會錄音保存。別人正在說話時聲控不會觸發，也不會插話；要插話請按住按鈕。換頻道時會自動關閉聲控。"
+        }
+        voxBox.addView(sensLabel); voxBox.addView(seek); voxBox.addView(meter); voxBox.addView(meterText)
+        voxBox.addView(test, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8); bottomMargin = dp(8) })
+        voxBox.addView(note)
+        root.addView(voxBox)
+        val limit = TextView(this).apply {
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.muted))
+            setPadding(0, dp(10), 0, dp(4))
+            text = "不論哪種方式，單次發話最長 60 秒，到時會自動結束並暫停 3 秒，讓其他人有機會說話。"
+        }
+        root.addView(limit)
+        refresh()
+        val scroll = android.widget.ScrollView(this).apply { addView(root) }
+        AlertDialog.Builder(this)
+            .setTitle("講話方式")
+            .setView(scroll)
+            .setPositiveButton("完成", null)
+            .setOnDismissListener { dialogLevel = null; if (testing) engine.setLevelTest(false) }
             .show()
     }
 

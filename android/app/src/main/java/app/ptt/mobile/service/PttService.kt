@@ -46,12 +46,13 @@ class PttService : Service(), PttEngine.Listener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_PTT_DOWN, ACTION_PTT_START -> engine.startTalk("notification")
-            ACTION_PTT_UP, ACTION_PTT_STOP -> engine.stopTalk("notification")
-            ACTION_PTT_TOGGLE -> {
-                if (engine.state.pressing) engine.stopTalk("notification")
-                else engine.startTalk("notification")
-            }
+            ACTION_PTT_DOWN -> engine.pttDown("notification")
+            ACTION_PTT_UP -> engine.pttUp("notification")
+            // 通知列的「發話」是點一下開始、再點一下結束＝鎖定講話
+            ACTION_PTT_START -> if (!engine.state.pressing) engine.toggleLock("notification")
+            ACTION_PTT_STOP -> engine.stopTalk("notification")
+            ACTION_PTT_TOGGLE -> engine.toggleLock("notification")
+            ACTION_VOX_OFF -> engine.disarmVox("聲控已關閉")
             ACTION_STOP -> {
                 engine.disconnect()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -197,7 +198,7 @@ class PttService : Service(), PttEngine.Listener {
                 when (ke.action) {
                     KeyEvent.ACTION_DOWN -> if (ke.repeatCount == 0) {
                         if (ke.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
-                            if (engine.state.pressing) engine.stopTalk("headset") else engine.startTalk("headset")
+                            engine.toggleLock("headset")
                         } else if (ke.keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE || ke.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) {
                             engine.stopTalk("headset")
                         } else {
@@ -251,7 +252,10 @@ class PttService : Service(), PttEngine.Listener {
         )
         val talkPi = pendingService(1, if (s.pressing) ACTION_PTT_STOP else ACTION_PTT_START)
         val title = when {
+            s.pressing && s.granted && s.talkKind == "vox" -> "Geelo · 聲控發話中"
+            s.pressing && s.granted && s.locked -> "Geelo · 鎖定講話中（點「結束發話」停止）"
             s.pressing && s.granted -> "Geelo · 正在發話"
+            s.voxArmed -> "Geelo · 聲控開啟中（有聲音會自動發送）"
             s.conn == "on" -> "Geelo · 已連線 · ${s.target?.label() ?: "未選頻道"}"
             else -> "Geelo · ${s.connText}"
         }
@@ -266,6 +270,7 @@ class PttService : Service(), PttEngine.Listener {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .addAction(R.drawable.ic_stat_mic, if (s.pressing) "結束發話" else "發話", talkPi)
+        if (s.voxArmed) builder.addAction(R.drawable.ic_stat_mic, "關閉聲控", pendingService(2, ACTION_VOX_OFF))
         mediaSession?.let {
             builder.setStyle(MediaStyle().setMediaSession(it.sessionToken).setShowActionsInCompactView(0))
         }
@@ -287,6 +292,7 @@ class PttService : Service(), PttEngine.Listener {
         const val ACTION_PTT_DOWN = "app.ptt.mobile.PTT_DOWN"
         const val ACTION_PTT_UP = "app.ptt.mobile.PTT_UP"
         const val ACTION_PTT_TOGGLE = "app.ptt.mobile.PTT_TOGGLE"
+        const val ACTION_VOX_OFF = "app.ptt.mobile.VOX_OFF"
         const val ACTION_STOP = "app.ptt.mobile.STOP"
         const val ACTION_CONNECT = "app.ptt.mobile.CONNECT"
 
